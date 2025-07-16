@@ -5,6 +5,7 @@ from pathlib import Path
 from PIL import Image
 from google import genai
 import os
+import argparse
 
 def generate_atari_image_urls(start=1, end=185):
     base_img_url = "https://www.atariarchives.org/basicgames/pages/page"
@@ -105,16 +106,85 @@ def transcribe_atari_basic(file, client):
     )
     return response.text
 
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Atari Basic Book Scan Tools - Extract BASIC programs from scanned book pages",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python process.py                    # Process pages 1-10 (default)
+  python process.py --page 5          # Process only page 5
+  python process.py --start 1 --end 5 # Process pages 1-5
+  python process.py --output-dir docs # Save to docs/ directory
+
+This script downloads GIF images from Atari Archives, converts them to PNG,
+and uses Google Gemini AI to transcribe BASIC programs into markdown files.
+
+Requirements:
+  - GEMINI_API_KEY environment variable must be set
+  - Internet connection for downloading images and API calls
+        """
+    )
+    
+    parser.add_argument(
+        "--start", 
+        type=int, 
+        default=1, 
+        help="Start page number (default: 1)"
+    )
+    
+    parser.add_argument(
+        "--end", 
+        type=int, 
+        default=10, 
+        help="End page number (default: 10)"
+    )
+    
+    parser.add_argument(
+        "--page", 
+        type=int, 
+        help="Process a specific page only (overrides --start and --end)"
+    )
+    
+    parser.add_argument(
+        "--output-dir", 
+        default="transcriptions", 
+        help="Output directory for markdown files (default: transcriptions)"
+    )
+    
+    parser.add_argument(
+        "--pause", 
+        type=float, 
+        default=0.5, 
+        help="Pause between downloads in seconds (default: 0.5)"
+    )
+    
+    return parser.parse_args()
+
 def main():
-    # Download and convert the first 10 images for testing
-    urls = generate_atari_image_urls(start=1, end=10)
-    png_files = download_images(urls)
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Determine page range
+    if args.page:
+        start_page = args.page
+        end_page = args.page
+        print(f"Processing page {args.page}")
+    else:
+        start_page = args.start
+        end_page = args.end
+        print(f"Processing pages {start_page} to {end_page}")
+    
+    # Download and convert images
+    urls = generate_atari_image_urls(start=start_page, end=end_page)
+    png_files = download_images(urls, pause_seconds=args.pause)
     if not png_files:
         print("No images downloaded.")
         return
     
-    # Process one page at a time (for now, use page 2 if available)
-    image_path = png_files[0]  # Use page 1
+    # Process the first available page
+    image_path = png_files[0]
     
     # Determine page number from filename
     page_number = int(Path(image_path).stem.replace("page", ""))
@@ -125,7 +195,7 @@ def main():
     result = transcribe_atari_basic(gemini_file, client)
     
     # Save transcription to markdown file
-    output_path = save_transcription_to_markdown(result, page_number)
+    output_path = save_transcription_to_markdown(result, page_number, args.output_dir)
     
     print(f"\nProcessed: {image_path}")
     print(f"Output saved to: {output_path}")
