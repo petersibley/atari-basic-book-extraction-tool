@@ -1,0 +1,17 @@
+downloads/
+png_output/
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python temp files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Vim temp files
+*.swp
+*.swo
+*.swx
+*.un~
