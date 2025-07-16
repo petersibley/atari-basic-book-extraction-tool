@@ -9,5 +9,4 @@ This repository contains scripts to extract basic program listings from old Atar
 
 ## Scripts
 
-- `dl.py`: Downloads scanned page images from Atari Basic books.
-- `convert.sh`: Converts downloaded GIF images to PNG format for easier processing.
+- `process.py`: Downloads scanned page images from Atari Basic books and converts them to PNG format.

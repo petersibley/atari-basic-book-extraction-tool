@@ -39,7 +39,7 @@ def download_images(urls, save_dir="downloads", pause_seconds=1):
         time.sleep(pause_seconds)
 
 def main():
-    urls = generate_atari_image_urls()
+    urls = generate_atari_image_urls(start=1, end=1)  # Only download the first image for testing
     download_images(urls)
 
 if __name__ == "__main__":
