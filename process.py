@@ -71,17 +71,29 @@ def upload_image_to_gemini(image_path, client):
     print(f"Upload complete: {file.name} (state: {file.state})")
     return file
 
+def upload_multiple_images_to_gemini(image_paths, client):
+    """Upload multiple images to Gemini and return list of uploaded files."""
+    uploaded_files = []
+    for image_path in image_paths:
+        print(f"Uploading {image_path}...")
+        file = upload_image_to_gemini(image_path, client)
+        uploaded_files.append(file)
+    return uploaded_files
+
 def delete_gemini_file(file_name, client):
     client.files.delete(name=file_name)
     print(f"Deleted Gemini file: {file_name}")
 
-def save_transcription_to_markdown(transcription, page_number, output_dir="transcriptions"):
+def save_transcription_to_markdown(transcription, page_range, output_dir="transcriptions"):
     """Save transcription result to a markdown file."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create filename based on page number
-    filename = f"page_{page_number:02d}.md"
+    # Create filename based on page range
+    if len(page_range) == 1:
+        filename = f"page_{page_range[0]:02d}.md"
+    else:
+        filename = f"pages_{page_range[0]:02d}-{page_range[-1]:02d}.md"
     output_path = output_dir / filename
     
     # Write transcription to file
@@ -91,18 +103,23 @@ def save_transcription_to_markdown(transcription, page_number, output_dir="trans
     print(f"Saved transcription to: {output_path}")
     return output_path
 
-def transcribe_atari_basic(file, client):
+def transcribe_atari_basic(files, client):
     prompt = (
-        "Please extract and transcribe all text content from this image, paying special attention to "
-        "any BASIC program listings. The image may contain Atari BASIC code with line numbers in a "
-        "terminal-like computer typeface. If you find any BASIC programs, please transcribe them "
-        "exactly as they appear, maintaining the original formatting and line numbers. If there are "
-        "program titles or names, please note them as well. Provide the transcribed content in "
-        "markdown format."
+        "Please extract and transcribe all text content from these images of Atari BASIC book pages. "
+        "Pay special attention to any BASIC program listings. The images may contain Atari BASIC code "
+        "with line numbers in a terminal-like computer typeface. If you find any BASIC programs, "
+        "please transcribe them exactly as they appear, maintaining the original formatting and line numbers. "
+        "If there are program titles or names, please note them as well. "
+        "For each program found, create a separate markdown section with the program title as a heading. "
+        "Provide all transcribed content in markdown format."
     )
+    
+    # Create contents list with prompt and all files
+    contents = [prompt] + files
+    
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[prompt, file]
+        contents=contents
     )
     return response.text
 
@@ -183,27 +200,35 @@ def main():
         print("No images downloaded.")
         return
     
-    # Process the first available page
-    image_path = png_files[0]
+    # Process all available pages
+    print(f"\nProcessing {len(png_files)} images...")
     
-    # Determine page number from filename
-    page_number = int(Path(image_path).stem.replace("page", ""))
+    # Extract page numbers for filename
+    page_numbers = []
+    for png_file in png_files:
+        page_number = int(Path(png_file).stem.replace("page", ""))
+        page_numbers.append(page_number)
     
     # Set up Gemini client (API key must be in GEMINI_API_KEY env var)
     client = genai.Client()
-    gemini_file = upload_image_to_gemini(image_path, client)
-    result = transcribe_atari_basic(gemini_file, client)
+    
+    # Upload all images to Gemini
+    gemini_files = upload_multiple_images_to_gemini(png_files, client)
+    
+    # Transcribe all images in one request
+    result = transcribe_atari_basic(gemini_files, client)
     
     # Save transcription to markdown file
-    output_path = save_transcription_to_markdown(result, page_number, args.output_dir)
+    output_path = save_transcription_to_markdown(result, page_numbers, args.output_dir)
     
-    print(f"\nProcessed: {image_path}")
+    print(f"\nProcessed: {len(png_files)} images")
     print(f"Output saved to: {output_path}")
     print("\nGemini Transcription Result:\n")
     print(result)
     
-    # Clean up uploaded file
-    delete_gemini_file(gemini_file.name, client)
+    # Clean up uploaded files
+    for gemini_file in gemini_files:
+        delete_gemini_file(gemini_file.name, client)
 
 if __name__ == "__main__":
     main()
