@@ -6,6 +6,8 @@ from PIL import Image
 from google import genai
 import os
 import argparse
+import json
+import re
 
 def generate_atari_image_urls(start=1, end=185):
     base_img_url = "https://www.atariarchives.org/basicgames/pages/page"
@@ -19,7 +21,7 @@ def convert_to_png(src_path, dest_dir="png_output"):
     
     # Check if PNG already exists
     if png_path.exists():
-        print(f"PNG already exists: {png_path}")
+        print(f"Using cached PNG: {png_path}")
         return png_path
     
     img = Image.open(src_path)
@@ -27,7 +29,7 @@ def convert_to_png(src_path, dest_dir="png_output"):
     print(f"Converted {src_path} -> {png_path}")
     return png_path
 
-def download_images(urls, save_dir="downloads", pause_seconds=0.5):
+def download_images(urls, save_dir="downloads", pause_seconds=0.25):
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     downloaded_files = []
     for url in urls:
@@ -36,7 +38,7 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.5):
         
         # Check if file already exists
         if save_path.exists():
-            print(f"File already exists: {save_path}")
+            print(f"Using cached file: {save_path}")
         else:
             print(f"Downloading {url} -> {save_path}")
             try:
@@ -44,6 +46,9 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.5):
                 response.raise_for_status()
                 with open(save_path, "wb") as f:
                     f.write(response.content)
+                print(f"Downloaded: {save_path}")
+                # Only pause after actual downloads to avoid hammering the server
+                time.sleep(pause_seconds)
             except Exception as e:
                 print(f"Failed to download {url}: {e}")
                 continue
@@ -54,7 +59,6 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.5):
         except Exception as e:
             print(f"Failed to convert {save_path}: {e}")
         
-        time.sleep(pause_seconds)
     return downloaded_files
 
 def upload_image_to_gemini(image_path, client):
@@ -103,18 +107,34 @@ def save_transcription_to_markdown(transcription, page_range, output_dir="transc
     print(f"Saved transcription to: {output_path}")
     return output_path
 
-def transcribe_atari_basic(files, client):
+def identify_basic_programs(files, client):
+    """Phase 1: Scan all images to identify BASIC program listings and their names."""
     prompt = (
-        "Please extract and transcribe all text content from these images of Atari BASIC book pages. "
-        "Pay special attention to any BASIC program listings. The images may contain Atari BASIC code "
-        "with line numbers in a terminal-like computer typeface. If you find any BASIC programs, "
-        "please transcribe them exactly as they appear, maintaining the original formatting and line numbers. "
-        "If there are program titles or names, please note them as well. "
-        "For each program found, create a separate markdown section with the program title as a heading. "
-        "Provide all transcribed content in markdown format."
+        "PHASE 1: PROGRAM IDENTIFICATION\n\n"
+        "Please scan through all the provided images of Atari BASIC book pages and identify every BASIC program listing. "
+        "Look for program source code that appears in a terminal-like computer typeface with line numbers. "
+        "Programs may span multiple pages.\n\n"
+        "For each program you find, provide:\n"
+        "1. Program name/title\n"
+        "2. Page numbers where the program appears\n"
+        "3. Brief description if available\n\n"
+        "IMPORTANT: Look only for the actual BASIC source code listings (lines with numbers like 10, 20, 30, etc.) "
+        "in computer terminal font. DO NOT include program execution output or sample runs.\n\n"
+        "Return your findings in this exact JSON format:\n"
+        "```json\n"
+        "{\n"
+        "  \"programs\": [\n"
+        "    {\n"
+        "      \"name\": \"Program Name\",\n"
+        "      \"pages\": [1, 2, 3],\n"
+        "      \"description\": \"Brief description\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "```"
     )
     
-    # Create contents list with prompt and all files
+    print(f"Phase 1: Identifying BASIC programs across {len(files)} images...")
     contents = [prompt] + files
     
     response = client.models.generate_content(
@@ -122,6 +142,71 @@ def transcribe_atari_basic(files, client):
         contents=contents
     )
     return response.text
+
+def extract_program_source(files, program_name, client):
+    """Phase 2: Extract source code for a specific program."""
+    prompt = (
+        f"PHASE 2: SOURCE CODE EXTRACTION\n\n"
+        f"Please extract the complete BASIC source code for the program '{program_name}' from the provided images. "
+        f"Look for the source code listing that appears in terminal-like computer typeface with line numbers.\n\n"
+        f"IMPORTANT GUIDELINES:\n"
+        f"- Extract ONLY the BASIC source code (lines starting with numbers like 10, 20, 30, etc.)\n"
+        f"- DO NOT include program execution output, sample runs, or example gameplay\n"
+        f"- Maintain exact formatting, spacing, and line numbers as they appear\n"
+        f"- If the program spans multiple pages, combine all source lines in order\n"
+        f"- Include any comments or REM statements that are part of the source code\n\n"
+        f"Return the source code in markdown format:\n"
+        f"```basic\n"
+        f"[SOURCE CODE HERE]\n"
+        f"```"
+    )
+    
+    print(f"Phase 2: Extracting source code for '{program_name}'...")
+    contents = [prompt] + files
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents
+    )
+    return response.text
+
+def parse_program_list(response_text):
+    """Parse the JSON response from program identification phase."""
+    try:
+        # Extract JSON from markdown code block if present
+        json_match = re.search(r'```json\n(.*?)\n```', response_text, re.DOTALL)
+        if json_match:
+            json_text = json_match.group(1)
+        else:
+            json_text = response_text
+        
+        data = json.loads(json_text)
+        return data.get('programs', [])
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON response: {e}")
+        print(f"Response text: {response_text}")
+        return []
+
+def save_program_to_file(program_name, source_code, output_dir="programs"):
+    """Save individual program source code to a markdown file."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create safe filename from program name
+    safe_name = re.sub(r'[^\w\s-]', '', program_name).strip()
+    safe_name = re.sub(r'[-\s]+', '-', safe_name)
+    filename = f"{safe_name.lower()}.md"
+    output_path = output_dir / filename
+    
+    # Create markdown content
+    markdown_content = f"# {program_name}\n\n{source_code}\n"
+    
+    # Write to file
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(markdown_content)
+    
+    print(f"Saved program '{program_name}' to: {output_path}")
+    return output_path
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -173,8 +258,8 @@ Requirements:
     parser.add_argument(
         "--pause", 
         type=float, 
-        default=0.5, 
-        help="Pause between downloads in seconds (default: 0.5)"
+        default=0.25, 
+        help="Pause between downloads in seconds (default: 0.25)"
     )
     
     return parser.parse_args()
@@ -194,41 +279,73 @@ def main():
         print(f"Processing pages {start_page} to {end_page}")
     
     # Download and convert images
+    print(f"\n📥 Downloading and converting {end_page - start_page + 1} images...")
     urls = generate_atari_image_urls(start=start_page, end=end_page)
     png_files = download_images(urls, pause_seconds=args.pause)
     if not png_files:
-        print("No images downloaded.")
+        print("❌ No images downloaded.")
         return
     
-    # Process all available pages
-    print(f"\nProcessing {len(png_files)} images...")
-    
-    # Extract page numbers for filename
-    page_numbers = []
-    for png_file in png_files:
-        page_number = int(Path(png_file).stem.replace("page", ""))
-        page_numbers.append(page_number)
+    print(f"✅ Successfully processed {len(png_files)} images")
     
     # Set up Gemini client (API key must be in GEMINI_API_KEY env var)
     client = genai.Client()
     
     # Upload all images to Gemini
+    print(f"\n📤 Uploading {len(png_files)} images to Gemini...")
     gemini_files = upload_multiple_images_to_gemini(png_files, client)
+    print(f"✅ All images uploaded successfully")
     
-    # Transcribe all images in one request
-    result = transcribe_atari_basic(gemini_files, client)
+    try:
+        # PHASE 1: Identify all BASIC programs
+        print(f"\n🔍 Phase 1: Identifying BASIC programs...")
+        program_list_response = identify_basic_programs(gemini_files, client)
+        programs = parse_program_list(program_list_response)
+        
+        if not programs:
+            print("❌ No programs found in the images.")
+            return
+        
+        print(f"✅ Found {len(programs)} programs:")
+        for i, program in enumerate(programs, 1):
+            pages_str = ", ".join(map(str, program.get('pages', [])))
+            print(f"  {i}. {program['name']} (pages: {pages_str})")
+        
+        # PHASE 2: Extract source code for each program
+        print(f"\n📝 Phase 2: Extracting source code for each program...")
+        saved_files = []
+        
+        for i, program in enumerate(programs, 1):
+            program_name = program['name']
+            print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}'...")
+            
+            try:
+                source_code = extract_program_source(gemini_files, program_name, client)
+                output_path = save_program_to_file(program_name, source_code, args.output_dir)
+                saved_files.append(output_path)
+                print(f"✅ Successfully saved '{program_name}'")
+            except Exception as e:
+                print(f"❌ Error processing '{program_name}': {e}")
+        
+        # Summary
+        print(f"\n🎉 Processing complete!")
+        print(f"📊 Summary:")
+        print(f"  - Images processed: {len(png_files)}")
+        print(f"  - Programs found: {len(programs)}")
+        print(f"  - Programs saved: {len(saved_files)}")
+        print(f"  - Output directory: {args.output_dir}")
+        
+        if saved_files:
+            print(f"\n📁 Saved program files:")
+            for file_path in saved_files:
+                print(f"  - {file_path}")
     
-    # Save transcription to markdown file
-    output_path = save_transcription_to_markdown(result, page_numbers, args.output_dir)
-    
-    print(f"\nProcessed: {len(png_files)} images")
-    print(f"Output saved to: {output_path}")
-    print("\nGemini Transcription Result:\n")
-    print(result)
-    
-    # Clean up uploaded files
-    for gemini_file in gemini_files:
-        delete_gemini_file(gemini_file.name, client)
+    finally:
+        # Clean up uploaded files
+        print(f"\n🧹 Cleaning up uploaded files...")
+        for gemini_file in gemini_files:
+            delete_gemini_file(gemini_file.name, client)
+        print("✅ Cleanup complete")
 
 if __name__ == "__main__":
     main()
