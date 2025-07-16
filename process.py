@@ -242,9 +242,9 @@ def save_transcription_to_markdown(transcription, page_range, output_dir="transc
     return output_path
 
 def identify_basic_programs(files, client, debug=False):
-    """Phase 1: Scan all images to identify BASIC program listings and their names."""
+    """Program Location Extraction: Scan all images to identify BASIC program listings and their names."""
     prompt = (
-        "PHASE 1: PROGRAM IDENTIFICATION\n\n"
+        "PROGRAM LOCATION EXTRACTION\n\n"
         "Please scan through all the provided images of Atari BASIC book pages and identify every BASIC program listing. "
         "Look for program source code that appears in a terminal-like computer typeface with line numbers. "
         "Programs may span multiple pages.\n\n"
@@ -268,7 +268,7 @@ def identify_basic_programs(files, client, debug=False):
         "```"
     )
     
-    print(f"Phase 1: Identifying BASIC programs across {len(files)} images...")
+    print(f"Program Location Extraction: Identifying BASIC programs across {len(files)} images...")
     contents = [prompt] + files
     
     response = client.models.generate_content(
@@ -277,7 +277,7 @@ def identify_basic_programs(files, client, debug=False):
     )
     
     if debug:
-        print("\n=== DEBUG: Phase 1 Gemini Response ===")
+        print("\n=== DEBUG: Program Location Extraction Gemini Response ===")
         print(response.text)
         print("=== END DEBUG ===\n")
     
@@ -302,13 +302,13 @@ def filter_files_by_pages(all_files, page_numbers):
     return filtered_files
 
 def extract_program_source(files, program_name, page_numbers, client, debug=False):
-    """Phase 2: Extract source code for a specific program."""
+    """Program Source Extraction: Extract source code for a specific program."""
     # Filter files to only include relevant pages
     filtered_files = filter_files_by_pages(files, page_numbers)
     
     pages_str = ", ".join(map(str, page_numbers)) if page_numbers else "all pages"
     prompt = (
-        f"PHASE 2: SOURCE CODE EXTRACTION\n\n"
+        f"PROGRAM SOURCE EXTRACTION\n\n"
         f"Please extract the complete BASIC source code for the program '{program_name}' from the provided images "
         f"(expected on pages: {pages_str}). "
         f"Look for the source code listing that appears in terminal-like computer typeface with line numbers.\n\n"
@@ -324,7 +324,7 @@ def extract_program_source(files, program_name, page_numbers, client, debug=Fals
         f"```"
     )
     
-    print(f"Phase 2: Extracting source code for '{program_name}' (pages: {pages_str}, {len(filtered_files)} images)...")
+    print(f"Program Source Extraction: Extracting source code for '{program_name}' (pages: {pages_str}, {len(filtered_files)} images)...")
     contents = [prompt] + filtered_files
     
     response = client.models.generate_content(
@@ -333,7 +333,7 @@ def extract_program_source(files, program_name, page_numbers, client, debug=Fals
     )
     
     if debug:
-        print(f"\n=== DEBUG: Phase 2 Response for '{program_name}' ===")
+        print(f"\n=== DEBUG: Program Source Extraction Response for '{program_name}' ===")
         print(f"Pages: {pages_str}")
         print(f"Filtered files: {len(filtered_files)}/{len(files)}")
         print(response.text)
@@ -342,10 +342,10 @@ def extract_program_source(files, program_name, page_numbers, client, debug=Fals
     return response.text
 
 def extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=False):
-    """Phase 2: Extract source code using pre-filtered files (optimized version)."""
+    """Program Source Extraction: Extract source code using pre-filtered files (optimized version)."""
     pages_str = ", ".join(map(str, page_numbers)) if page_numbers else "all pages"
     prompt = (
-        f"PHASE 2: SOURCE CODE EXTRACTION\n\n"
+        f"PROGRAM SOURCE EXTRACTION\n\n"
         f"Please extract the complete BASIC source code for the program '{program_name}' from the provided images "
         f"(expected on pages: {pages_str}). "
         f"Look for the source code listing that appears in terminal-like computer typeface with line numbers.\n\n"
@@ -361,7 +361,7 @@ def extract_program_source_optimized(files_for_program, program_name, page_numbe
         f"```"
     )
     
-    print(f"Phase 2: Extracting source code for '{program_name}' (pages: {pages_str}, {len(files_for_program)} images)...")
+    print(f"Program Source Extraction: Extracting source code for '{program_name}' (pages: {pages_str}, {len(files_for_program)} images)...")
     contents = [prompt] + files_for_program
     
     response = client.models.generate_content(
@@ -370,7 +370,7 @@ def extract_program_source_optimized(files_for_program, program_name, page_numbe
     )
     
     if debug:
-        print(f"\n=== DEBUG: Phase 2 Response for '{program_name}' ===")
+        print(f"\n=== DEBUG: Program Source Extraction Response for '{program_name}' ===")
         print(f"Pages: {pages_str}")
         print(f"Images provided: {len(files_for_program)}")
         print(response.text)
@@ -548,20 +548,20 @@ Requirements:
     )
     
     parser.add_argument(
-        "--phase-1-only",
+        "--locate-programs-only",
         action="store_true",
-        help="Only run Phase 1 (program identification) and save results to JSON"
+        help="Only run program location extraction and save results to JSON"
     )
     
     parser.add_argument(
-        "--phase-2-only",
+        "--extract-source-only",
         action="store_true",
-        help="Only run Phase 2 (source extraction) using existing program list JSON"
+        help="Only run program source extraction using existing program list JSON"
     )
     
     parser.add_argument(
         "--program-list",
-        help="Path to JSON file containing program list (for --phase-2-only)"
+        help="Path to JSON file containing program list (for --extract-source-only)"
     )
     
     parser.add_argument(
@@ -612,9 +612,9 @@ def main():
     # Set up Gemini client (API key must be in GEMINI_API_KEY env var)
     client = genai.Client()
     
-    # Handle phase-2-only mode differently (no bulk upload needed)
-    if args.phase_2_only:
-        # Phase 2 only mode handles its own image upload optimization
+    # Handle extract-source-only mode differently (no bulk upload needed)
+    if args.extract_source_only:
+        # Extract-source-only mode handles its own image upload optimization
         pass
     else:
         # Download and convert images (for all other modes)
@@ -633,9 +633,9 @@ def main():
         print(f"✅ All images uploaded successfully")
     
     try:
-        # Handle phase-1-only mode
-        if args.phase_1_only:
-            print(f"\n🔍 Phase 1 only: Identifying BASIC programs...")
+        # Handle locate-programs-only mode
+        if args.locate_programs_only:
+            print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
             program_list_response = identify_basic_programs(gemini_files, client, debug=args.debug)
             programs = parse_program_list(program_list_response, debug=args.debug)
             
@@ -652,13 +652,13 @@ def main():
             save_program_list_to_json(programs, args.output_dir)
             return
         
-        # Handle phase-2-only mode (OPTIMIZED)
-        if args.phase_2_only:
+        # Handle extract-source-only mode (OPTIMIZED)
+        if args.extract_source_only:
             if not args.program_list:
-                print("❌ --program-list is required for --phase-2-only mode")
+                print("❌ --program-list is required for --extract-source-only mode")
                 return
             
-            print(f"\n📝 Phase 2 only: Loading program list from {args.program_list}")
+            print(f"\n📝 Program Source Extraction: Loading program list from {args.program_list}")
             programs = load_program_list_from_json(args.program_list, debug=args.debug)
             
             if not programs:
@@ -741,8 +741,8 @@ def main():
                             print(f"🔍 DEBUG: Full traceback for '{program_name}':")
                             traceback.print_exc()
                 
-                # Final summary for Phase 2
-                print(f"\n🎉 Phase 2 complete!")
+                # Final summary for Program Source Extraction
+                print(f"\n🎉 Program Source Extraction complete!")
                 print(f"📊 Summary:")
                 print(f"  - Total programs in list: {len(programs)}")
                 print(f"  - Successfully saved: {len(saved_files)}")
@@ -774,8 +774,8 @@ def main():
             return
         
         # Default: Run both phases with optimization
-        # PHASE 1: Identify all BASIC programs
-        print(f"\n🔍 Phase 1: Identifying BASIC programs...")
+        # PROGRAM LOCATION EXTRACTION: Identify all BASIC programs
+        print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
         program_list_response = identify_basic_programs(gemini_files, client, debug=args.debug)
         programs = parse_program_list(program_list_response, debug=args.debug)
         
@@ -791,8 +791,8 @@ def main():
         # Save program list to JSON for debugging
         save_program_list_to_json(programs, args.output_dir)
         
-        # OPTIMIZATION: Create page-to-file mapping for Phase 2 reuse
-        print(f"\n🔧 Creating page-to-file mapping for optimized Phase 2...")
+        # OPTIMIZATION: Create page-to-file mapping for Program Source Extraction reuse
+        print(f"\n🔧 Creating page-to-file mapping for optimized Program Source Extraction...")
         page_to_gemini_file = create_page_to_file_mapping(gemini_files, start_page, debug=args.debug)
         
         # Get unique pages needed for all programs
@@ -808,8 +808,8 @@ def main():
         if missing_pages:
             print(f"⚠️  Missing pages will cause some programs to be skipped: {missing_pages}")
         
-        # PHASE 2: Extract source code for each program using optimized approach
-        print(f"\n📝 Phase 2: Extracting source code for each program (optimized)...")
+        # PROGRAM SOURCE EXTRACTION: Extract source code for each program using optimized approach
+        print(f"\n📝 Program Source Extraction: Extracting source code for each program (optimized)...")
         saved_files = []
         skipped_programs = []
         failed_programs = []

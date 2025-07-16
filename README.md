@@ -4,14 +4,14 @@ Scripts for extracting Atari BASIC program listings from scanned book images usi
 
 ## Features
 
-- **Two-Phase Extraction:**
-  - **Phase 1:** Identify all BASIC programs and their page ranges.
-  - **Phase 2:** Extract source code for each program.
+- **Two-Step Extraction:**
+  - **Program Location Extraction:** Identify all BASIC programs and their page ranges.
+  - **Program Source Extraction:** Extract source code for each program.
 - **Automated Download & Conversion:** Fetches GIFs from AtariArchives, converts to PNG.
 - **AI OCR:** Uses Gemini for program identification and code extraction.
 - **Output:** Individual markdown files per program, plus a JSON index.
 - **Smart Caching:** Skips already-downloaded/converted files.
-- **Debug & Phase Control:** Run phases independently, debug output, or just download/convert.
+- **Debug & Step Control:** Run extraction steps independently, debug output, or just download/convert.
 
 ## Requirements
 
@@ -46,14 +46,14 @@ pip install -r requirements.txt
 ### Typical Workflow
 
 ```bash
-# Phase 1: Identify programs (pages 1-25)
-python process.py --start 1 --end 25 --phase-1-only --output-dir results
+# Program Location Extraction: Identify programs (pages 1-25)
+python process.py --start 1 --end 25 --locate-programs-only --output-dir results
 
-# Phase 2: Extract code for all programs found
-python process.py --phase-2-only --program-list results/program_list.json --output-dir results
+# Program Source Extraction: Extract code for all programs found
+python process.py --extract-source-only --program-list results/program_list.json --output-dir results
 ```
 
-### All-in-One (both phases, pages 1-10 by default)
+### All-in-One (both extraction steps, pages 1-10 by default)
 
 ```bash
 python process.py
@@ -65,9 +65,9 @@ python process.py
 - `--page N`: Single page (overrides start/end)
 - `--output-dir DIR`: Output directory (default: transcriptions)
 - `--pause SECONDS`: Delay between downloads (default: 0.25)
-- `--phase-1-only`: Only identify programs, save JSON
-- `--phase-2-only`: Only extract code (requires `--program-list`)
-- `--program-list FILE`: JSON file from phase 1
+- `--locate-programs-only`: Only identify programs, save JSON
+- `--extract-source-only`: Only extract code (requires `--program-list`)
+- `--program-list FILE`: JSON file from program location extraction
 - `--download-only`: Download/convert images, then exit
 - `--convert-only`: Convert GIFs to PNG, then exit
 - `--debug`: Verbose Gemini output
@@ -77,8 +77,8 @@ python process.py
 - **downloads/**: GIFs
 - **png_output/**: PNGs
 - **[output-dir]/**: 
-  - `program_list.json`: Program metadata (phase 1)
-  - `*.md`: One file per program (phase 2)
+  - `program_list.json`: Program metadata (program location extraction)
+  - `*.md`: One file per program (program source extraction)
 
 ## Example Output
 
