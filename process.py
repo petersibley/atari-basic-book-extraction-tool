@@ -149,11 +149,34 @@ def identify_basic_programs(files, client, debug=False):
     
     return response.text
 
-def extract_program_source(files, program_name, client, debug=False):
+def filter_files_by_pages(all_files, page_numbers):
+    """Filter gemini_files to only include files for specific page numbers."""
+    if not page_numbers:
+        return all_files
+    
+    filtered_files = []
+    for file in all_files:
+        # Extract page number from file name (e.g., "files/abc123" -> need to map back to original)
+        # We need to find the corresponding page number
+        # The files are uploaded in order, so we can use the index
+        file_index = all_files.index(file)
+        page_number = file_index + 1  # Pages are 1-indexed
+        
+        if page_number in page_numbers:
+            filtered_files.append(file)
+    
+    return filtered_files
+
+def extract_program_source(files, program_name, page_numbers, client, debug=False):
     """Phase 2: Extract source code for a specific program."""
+    # Filter files to only include relevant pages
+    filtered_files = filter_files_by_pages(files, page_numbers)
+    
+    pages_str = ", ".join(map(str, page_numbers)) if page_numbers else "all pages"
     prompt = (
         f"PHASE 2: SOURCE CODE EXTRACTION\n\n"
-        f"Please extract the complete BASIC source code for the program '{program_name}' from the provided images. "
+        f"Please extract the complete BASIC source code for the program '{program_name}' from the provided images "
+        f"(expected on pages: {pages_str}). "
         f"Look for the source code listing that appears in terminal-like computer typeface with line numbers.\n\n"
         f"IMPORTANT GUIDELINES:\n"
         f"- Extract ONLY the BASIC source code (lines starting with numbers like 10, 20, 30, etc.)\n"
@@ -167,8 +190,8 @@ def extract_program_source(files, program_name, client, debug=False):
         f"```"
     )
     
-    print(f"Phase 2: Extracting source code for '{program_name}'...")
-    contents = [prompt] + files
+    print(f"Phase 2: Extracting source code for '{program_name}' (pages: {pages_str}, {len(filtered_files)} images)...")
+    contents = [prompt] + filtered_files
     
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -177,6 +200,8 @@ def extract_program_source(files, program_name, client, debug=False):
     
     if debug:
         print(f"\n=== DEBUG: Phase 2 Response for '{program_name}' ===")
+        print(f"Pages: {pages_str}")
+        print(f"Filtered files: {len(filtered_files)}/{len(files)}")
         print(response.text)
         print("=== END DEBUG ===\n")
     
@@ -436,7 +461,8 @@ def main():
                 print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}'...")
                 
                 try:
-                    source_code = extract_program_source(gemini_files, program_name, client, debug=args.debug)
+                    page_numbers = program.get('pages', [])
+                    source_code = extract_program_source(gemini_files, program_name, page_numbers, client, debug=args.debug)
                     output_path = save_program_to_file(program_name, source_code, args.output_dir)
                     saved_files.append(output_path)
                     print(f"✅ Successfully saved '{program_name}'")
@@ -473,7 +499,8 @@ def main():
             print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}'...")
             
             try:
-                source_code = extract_program_source(gemini_files, program_name, client, debug=args.debug)
+                page_numbers = program.get('pages', [])
+                source_code = extract_program_source(gemini_files, program_name, page_numbers, client, debug=args.debug)
                 output_path = save_program_to_file(program_name, source_code, args.output_dir)
                 saved_files.append(output_path)
                 print(f"✅ Successfully saved '{program_name}'")
