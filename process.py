@@ -13,7 +13,7 @@ def generate_atari_image_urls(start=1, end=185):
     base_img_url = "https://www.atariarchives.org/basicgames/pages/page"
     return [f"{base_img_url}{page}.gif" for page in range(start, end + 1)]
 
-def convert_to_png(src_path, dest_dir="png_output", debug=False):
+def convert_to_png(src_path, dest_dir="png_output", verbose=False):
     """Converts an image file to PNG format using Pillow, saving to dest_dir."""
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -25,23 +25,23 @@ def convert_to_png(src_path, dest_dir="png_output", debug=False):
         return png_path
     
     try:
-        if debug:
-            print(f"🔍 DEBUG: Converting {src_path} to PNG format")
+        if verbose:
+            print(f"🔍 VERBOSE: Converting {src_path} to PNG format")
         
         img = Image.open(src_path)
         img.save(png_path, format="PNG", optimize=True)
         print(f"✅ Converted {src_path} -> {png_path}")
         
-        if debug:
+        if verbose:
             file_size = png_path.stat().st_size
-            print(f"🔍 DEBUG: PNG file size: {file_size:,} bytes")
+            print(f"🔍 VERBOSE: PNG file size: {file_size:,} bytes")
         
         return png_path
     except Exception as e:
         print(f"❌ Failed to convert {src_path} to PNG: {e}")
         raise
 
-def download_images(urls, save_dir="downloads", pause_seconds=0.25, debug=False):
+def download_images(urls, save_dir="downloads", pause_seconds=0.25, verbose=False):
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     downloaded_files = []
     cached_count = 0
@@ -49,8 +49,8 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.25, debug=False)
     convert_errors = []
     download_errors = []
     
-    if debug:
-        print(f"🔍 DEBUG: Starting download of {len(urls)} images to {save_dir}")
+    if verbose:
+        print(f"🔍 VERBOSE: Starting download of {len(urls)} images to {save_dir}")
     
     for i, url in enumerate(urls, 1):
         filename = url.split("/")[-1]
@@ -78,7 +78,7 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.25, debug=False)
                 continue
         
         try:
-            png_path = convert_to_png(save_path, debug=debug)
+            png_path = convert_to_png(save_path, verbose=verbose)
             downloaded_files.append(png_path)
         except Exception as e:
             error_msg = f"Failed to convert {save_path}: {e}"
@@ -98,8 +98,8 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.25, debug=False)
         for file_path, error in convert_errors:
             print(f"  - {file_path}: {error}")
     
-    if debug:
-        print(f"🔍 DEBUG: Final downloaded files count: {len(downloaded_files)}")
+    if verbose:
+        print(f"🔍 VERBOSE: Final downloaded files count: {len(downloaded_files)}")
     
     return downloaded_files
 
@@ -134,34 +134,34 @@ def get_unique_pages_from_programs(programs):
         unique_pages.update(pages)
     return sorted(list(unique_pages))
 
-def get_png_paths_for_pages(page_numbers, debug=False):
+def get_png_paths_for_pages(page_numbers, verbose=False):
     """Map page numbers to their PNG file paths."""
     png_paths = {}
     missing_files = []
     
-    if debug:
-        print(f"🔍 DEBUG: Checking PNG files for {len(page_numbers)} pages: {page_numbers}")
+    if verbose:
+        print(f"🔍 VERBOSE: Checking PNG files for {len(page_numbers)} pages: {page_numbers}")
     
     for page_num in page_numbers:
         png_path = Path("png_output") / f"page{page_num}.png"
         if png_path.exists():
             png_paths[page_num] = png_path
-            if debug:
-                print(f"✅ DEBUG: Found PNG for page {page_num}: {png_path}")
+            if verbose:
+                print(f"✅ VERBOSE: Found PNG for page {page_num}: {png_path}")
         else:
             missing_files.append(page_num)
             print(f"⚠️  PNG file not found for page {page_num}: {png_path}")
     
-    if debug:
-        print(f"📊 DEBUG: Found {len(png_paths)} PNG files, missing {len(missing_files)} files")
+    if verbose:
+        print(f"📊 VERBOSE: Found {len(png_paths)} PNG files, missing {len(missing_files)} files")
         if missing_files:
-            print(f"❌ DEBUG: Missing pages: {missing_files}")
+            print(f"❌ VERBOSE: Missing pages: {missing_files}")
     
     return png_paths
 
-def upload_images_for_pages(page_numbers, client, debug=False):
+def upload_images_for_pages(page_numbers, client, verbose=False):
     """Upload only the needed images and return page-to-handle mapping."""
-    png_paths = get_png_paths_for_pages(page_numbers, debug=debug)
+    png_paths = get_png_paths_for_pages(page_numbers, verbose=verbose)
     page_to_gemini_file = {}
     upload_errors = []
     
@@ -181,8 +181,8 @@ def upload_images_for_pages(page_numbers, client, debug=False):
             print(f"📤 ({i}/{len(png_paths)}) Uploading page {page_num}: {png_path}...")
             gemini_file = upload_image_to_gemini(png_path, client)
             page_to_gemini_file[page_num] = gemini_file
-            if debug:
-                print(f"✅ DEBUG: Successfully uploaded page {page_num} as {gemini_file.name}")
+            if verbose:
+                print(f"✅ VERBOSE: Successfully uploaded page {page_num} as {gemini_file.name}")
         except Exception as e:
             upload_errors.append((page_num, str(e)))
             print(f"❌ Failed to upload page {page_num}: {e}")
@@ -195,26 +195,26 @@ def upload_images_for_pages(page_numbers, client, debug=False):
         for page_num, error in upload_errors:
             print(f"  - Page {page_num}: {error}")
     
-    if debug:
-        print(f"🔍 DEBUG: Final page-to-file mapping: {list(page_to_gemini_file.keys())}")
+    if verbose:
+        print(f"🔍 VERBOSE: Final page-to-file mapping: {list(page_to_gemini_file.keys())}")
     
     return page_to_gemini_file
 
-def create_page_to_file_mapping(gemini_files, start_page, debug=False):
+def create_page_to_file_mapping(gemini_files, start_page, verbose=False):
     """Create a mapping from page numbers to gemini files for sequential uploads."""
     page_to_gemini_file = {}
     
-    if debug:
-        print(f"🔍 DEBUG: Creating page-to-file mapping for {len(gemini_files)} files starting from page {start_page}")
+    if verbose:
+        print(f"🔍 VERBOSE: Creating page-to-file mapping for {len(gemini_files)} files starting from page {start_page}")
     
     for i, gemini_file in enumerate(gemini_files):
         page_num = start_page + i
         page_to_gemini_file[page_num] = gemini_file
-        if debug:
-            print(f"🔍 DEBUG: Mapped page {page_num} -> {gemini_file.name}")
+        if verbose:
+            print(f"🔍 VERBOSE: Mapped page {page_num} -> {gemini_file.name}")
     
-    if debug:
-        print(f"🔍 DEBUG: Created mapping for pages: {sorted(page_to_gemini_file.keys())}")
+    if verbose:
+        print(f"🔍 VERBOSE: Created mapping for pages: {sorted(page_to_gemini_file.keys())}")
     
     return page_to_gemini_file
 
@@ -241,7 +241,7 @@ def save_transcription_to_markdown(transcription, page_range, output_dir="transc
     print(f"Saved transcription to: {output_path}")
     return output_path
 
-def identify_basic_programs(files, client, debug=False):
+def identify_basic_programs(files, client, verbose=False):
     """Program Location Extraction: Scan all images to identify BASIC program listings and their names."""
     prompt = (
         "PROGRAM LOCATION EXTRACTION\n\n"
@@ -276,10 +276,10 @@ def identify_basic_programs(files, client, debug=False):
         contents=contents
     )
     
-    if debug:
-        print("\n=== DEBUG: Program Location Extraction Gemini Response ===")
+    if verbose:
+        print("\n=== VERBOSE: Program Location Extraction Gemini Response ===")
         print(response.text)
-        print("=== END DEBUG ===\n")
+        print("=== END VERBOSE ===\n")
     
     return response.text
 
@@ -301,7 +301,7 @@ def filter_files_by_pages(all_files, page_numbers):
     
     return filtered_files
 
-def extract_program_source(files, program_name, page_numbers, client, debug=False):
+def extract_program_source(files, program_name, page_numbers, client, verbose=False):
     """Program Source Extraction: Extract source code for a specific program."""
     # Filter files to only include relevant pages
     filtered_files = filter_files_by_pages(files, page_numbers)
@@ -332,16 +332,16 @@ def extract_program_source(files, program_name, page_numbers, client, debug=Fals
         contents=contents
     )
     
-    if debug:
-        print(f"\n=== DEBUG: Program Source Extraction Response for '{program_name}' ===")
+    if verbose:
+        print(f"\n=== VERBOSE: Program Source Extraction Response for '{program_name}' ===")
         print(f"Pages: {pages_str}")
         print(f"Filtered files: {len(filtered_files)}/{len(files)}")
         print(response.text)
-        print("=== END DEBUG ===\n")
+        print("=== END VERBOSE ===\n")
     
     return response.text
 
-def extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=False):
+def extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=False):
     """Program Source Extraction: Extract source code using pre-filtered files (optimized version)."""
     pages_str = ", ".join(map(str, page_numbers)) if page_numbers else "all pages"
     prompt = (
@@ -369,53 +369,53 @@ def extract_program_source_optimized(files_for_program, program_name, page_numbe
         contents=contents
     )
     
-    if debug:
-        print(f"\n=== DEBUG: Program Source Extraction Response for '{program_name}' ===")
+    if verbose:
+        print(f"\n=== VERBOSE: Program Source Extraction Response for '{program_name}' ===")
         print(f"Pages: {pages_str}")
         print(f"Images provided: {len(files_for_program)}")
         print(response.text)
-        print("=== END DEBUG ===\n")
+        print("=== END VERBOSE ===\n")
     
     return response.text
 
-def parse_program_list(response_text, debug=False):
+def parse_program_list(response_text, verbose=False):
     """Parse the JSON response from program identification phase."""
     if not response_text:
         print("❌ Error: Empty response from Gemini")
         return []
     
-    if debug:
-        print(f"🔍 DEBUG: Parsing program list from response ({len(response_text)} chars)")
+    if verbose:
+        print(f"🔍 VERBOSE: Parsing program list from response ({len(response_text)} chars)")
     
     try:
         # Extract JSON from markdown code block if present
         json_match = re.search(r'```json\n(.*?)\n```', response_text, re.DOTALL)
         if json_match:
             json_text = json_match.group(1)
-            if debug:
-                print(f"🔍 DEBUG: Found JSON in markdown code block")
+            if verbose:
+                print(f"🔍 VERBOSE: Found JSON in markdown code block")
         else:
             json_text = response_text
-            if debug:
-                print(f"🔍 DEBUG: Using entire response as JSON")
+            if verbose:
+                print(f"🔍 VERBOSE: Using entire response as JSON")
         
         data = json.loads(json_text)
         programs = data.get('programs', [])
         
-        if debug:
-            print(f"🔍 DEBUG: Successfully parsed {len(programs)} programs from JSON")
+        if verbose:
+            print(f"🔍 VERBOSE: Successfully parsed {len(programs)} programs from JSON")
             if programs:
                 total_pages = set()
                 for program in programs:
                     total_pages.update(program.get('pages', []))
-                print(f"🔍 DEBUG: Programs span {len(total_pages)} unique pages: {sorted(total_pages)}")
+                print(f"🔍 VERBOSE: Programs span {len(total_pages)} unique pages: {sorted(total_pages)}")
         
         return programs
         
     except json.JSONDecodeError as e:
         print(f"❌ Error parsing JSON response: {e}")
-        if debug:
-            print(f"🔍 DEBUG: Failed JSON text (first 500 chars): {json_text[:500]}...")
+        if verbose:
+            print(f"🔍 VERBOSE: Failed JSON text (first 500 chars): {json_text[:500]}...")
         print(f"Raw response text (first 200 chars): {response_text[:200]}...")
         return []
 
@@ -432,10 +432,10 @@ def save_program_list_to_json(programs, output_dir="transcriptions"):
     print(f"Saved program list to: {json_path}")
     return json_path
 
-def load_program_list_from_json(json_path, debug=False):
+def load_program_list_from_json(json_path, verbose=False):
     """Load program list from JSON file."""
-    if debug:
-        print(f"🔍 DEBUG: Loading program list from {json_path}")
+    if verbose:
+        print(f"🔍 VERBOSE: Loading program list from {json_path}")
     
     try:
         if not Path(json_path).exists():
@@ -446,9 +446,9 @@ def load_program_list_from_json(json_path, debug=False):
             data = json.load(f)
         
         programs = data.get("programs", [])
-        if debug:
-            print(f"✅ DEBUG: Loaded {len(programs)} programs from JSON")
-            for i, program in enumerate(programs[:5], 1):  # Show first 5 for debugging
+        if verbose:
+            print(f"✅ VERBOSE: Loaded {len(programs)} programs from JSON")
+            for i, program in enumerate(programs[:5], 1):  # Show first 5 for verbose
                 pages = program.get('pages', [])
                 print(f"  {i}. {program.get('name', 'Unknown')} (pages: {pages})")
             if len(programs) > 5:
@@ -488,7 +488,6 @@ def parse_arguments():
         epilog="""
 Examples:
   python process.py                    # Process pages 1-10 (default)
-  python process.py --page 5          # Process only page 5
   python process.py --start 1 --end 5 # Process pages 1-5
   python process.py --output-dir docs # Save to docs/ directory
 
@@ -516,33 +515,27 @@ Requirements:
     )
     
     parser.add_argument(
-        "--page", 
-        type=int, 
-        help="Process a specific page only (overrides --start and --end)"
-    )
-    
-    parser.add_argument(
         "--output-dir", 
         default="transcriptions", 
         help="Output directory for markdown files (default: transcriptions)"
     )
     
     parser.add_argument(
-        "--pause", 
-        type=float, 
-        default=0.25, 
+        "--download-pause",
+        type=float,
+        default=0.25,
         help="Pause between downloads in seconds (default: 0.25)"
     )
     
     # Debug and phase-specific options
     parser.add_argument(
-        "--download-only",
+        "--download-images-only",
         action="store_true",
         help="Only download and convert images, then exit"
     )
     
     parser.add_argument(
-        "--convert-only",
+        "--convert-images-only",
         action="store_true",
         help="Only convert existing GIF files to PNG, then exit"
     )
@@ -565,9 +558,9 @@ Requirements:
     )
     
     parser.add_argument(
-        "--debug",
+        "--verbose",
         action="store_true",
-        help="Enable debug output including full Gemini responses"
+        help="Enable verbose output including full Gemini responses"
     )
     
     return parser.parse_args()
@@ -577,32 +570,27 @@ def main():
     args = parse_arguments()
     
     # Determine page range
-    if args.page:
-        start_page = args.page
-        end_page = args.page
-        print(f"Processing page {args.page}")
-    else:
-        start_page = args.start
-        end_page = args.end
-        print(f"Processing pages {start_page} to {end_page}")
+    start_page = args.start
+    end_page = args.end
+    print(f"Processing pages {start_page} to {end_page}")
     
-    # Handle download-only mode
-    if args.download_only:
-        print(f"\n📥 Download-only mode: Downloading {end_page - start_page + 1} images...")
+    # Handle download-images-only mode
+    if args.download_images_only:
+        print(f"\n📥 Download-images-only mode: Downloading {end_page - start_page + 1} images...")
         urls = generate_atari_image_urls(start=start_page, end=end_page)
-        png_files = download_images(urls, pause_seconds=args.pause, debug=args.debug)
+        png_files = download_images(urls, pause_seconds=args.download_pause, verbose=args.verbose)
         print(f"✅ Downloaded and converted {len(png_files)} images")
         return
     
-    # Handle convert-only mode
-    if args.convert_only:
-        print(f"\n🔄 Convert-only mode: Converting existing GIF files to PNG...")
+    # Handle convert-images-only mode
+    if args.convert_images_only:
+        print(f"\n🔄 Convert-images-only mode: Converting existing GIF files to PNG...")
         png_files = []
         for page in range(start_page, end_page + 1):
             gif_path = Path("downloads") / f"page{page}.gif"
             if gif_path.exists():
                 try:
-                    png_path = convert_to_png(gif_path, debug=args.debug)
+                    png_path = convert_to_png(gif_path, verbose=args.verbose)
                     png_files.append(png_path)
                 except Exception as e:
                     print(f"❌ Failed to convert {gif_path}: {e}")
@@ -620,7 +608,7 @@ def main():
         # Download and convert images (for all other modes)
         print(f"\n📥 Downloading and converting {end_page - start_page + 1} images...")
         urls = generate_atari_image_urls(start=start_page, end=end_page)
-        png_files = download_images(urls, pause_seconds=args.pause, debug=args.debug)
+        png_files = download_images(urls, pause_seconds=args.download_pause, verbose=args.verbose)
         if not png_files:
             print("❌ No images downloaded.")
             return
@@ -636,8 +624,8 @@ def main():
         # Handle locate-programs-only mode
         if args.locate_programs_only:
             print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
-            program_list_response = identify_basic_programs(gemini_files, client, debug=args.debug)
-            programs = parse_program_list(program_list_response, debug=args.debug)
+            program_list_response = identify_basic_programs(gemini_files, client, verbose=args.verbose)
+            programs = parse_program_list(program_list_response, verbose=args.verbose)
             
             if not programs:
                 print("❌ No programs found in the images.")
@@ -659,7 +647,7 @@ def main():
                 return
             
             print(f"\n📝 Program Source Extraction: Loading program list from {args.program_list}")
-            programs = load_program_list_from_json(args.program_list, debug=args.debug)
+            programs = load_program_list_from_json(args.program_list, verbose=args.verbose)
             
             if not programs:
                 print("❌ No programs found in the program list file.")
@@ -672,7 +660,7 @@ def main():
             print(f"📊 Programs need {len(unique_pages)} unique pages: {', '.join(map(str, unique_pages))}")
             
             # Upload only the needed images
-            page_to_gemini_file = upload_images_for_pages(unique_pages, client, debug=args.debug)
+            page_to_gemini_file = upload_images_for_pages(unique_pages, client, verbose=args.verbose)
             
             if not page_to_gemini_file:
                 print("❌ No images could be uploaded.")
@@ -691,8 +679,8 @@ def main():
                     
                     print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}' (pages: {pages_str})...")
                     
-                    if args.debug:
-                        print(f"🔍 DEBUG: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
+                    if args.verbose:
+                        print(f"🔍 VERBOSE: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
                     
                     try:
                         # Get the specific Gemini files for this program
@@ -705,10 +693,10 @@ def main():
                             else:
                                 missing_pages.append(page)
                         
-                        if args.debug:
-                            print(f"🔍 DEBUG: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
+                        if args.verbose:
+                            print(f"🔍 VERBOSE: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
                             if missing_pages:
-                                print(f"🔍 DEBUG: Missing pages for '{program_name}': {missing_pages}")
+                                print(f"🔍 VERBOSE: Missing pages for '{program_name}': {missing_pages}")
                         
                         if not files_for_program:
                             skip_msg = f"No files found for '{program_name}' on pages {page_numbers}"
@@ -720,7 +708,7 @@ def main():
                             print(f"⚠️  Partial data: missing {len(missing_pages)} pages for '{program_name}': {missing_pages}")
                         
                         print(f"🤖 Calling Gemini AI to extract source code...")
-                        source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=args.debug)
+                        source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=args.verbose)
                         
                         if not source_code.strip():
                             skip_msg = f"Empty response from Gemini for '{program_name}'"
@@ -736,9 +724,9 @@ def main():
                         error_msg = f"Error processing '{program_name}': {e}"
                         print(f"❌ {error_msg}")
                         failed_programs.append((program_name, str(e)))
-                        if args.debug:
+                        if args.verbose:
                             import traceback
-                            print(f"🔍 DEBUG: Full traceback for '{program_name}':")
+                            print(f"🔍 VERBOSE: Full traceback for '{program_name}':")
                             traceback.print_exc()
                 
                 # Final summary for Program Source Extraction
@@ -776,8 +764,8 @@ def main():
         # Default: Run both phases with optimization
         # PROGRAM LOCATION EXTRACTION: Identify all BASIC programs
         print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
-        program_list_response = identify_basic_programs(gemini_files, client, debug=args.debug)
-        programs = parse_program_list(program_list_response, debug=args.debug)
+        program_list_response = identify_basic_programs(gemini_files, client, verbose=args.verbose)
+        programs = parse_program_list(program_list_response, verbose=args.verbose)
         
         if not programs:
             print("❌ No programs found in the images.")
@@ -793,7 +781,7 @@ def main():
         
         # OPTIMIZATION: Create page-to-file mapping for Program Source Extraction reuse
         print(f"\n🔧 Creating page-to-file mapping for optimized Program Source Extraction...")
-        page_to_gemini_file = create_page_to_file_mapping(gemini_files, start_page, debug=args.debug)
+        page_to_gemini_file = create_page_to_file_mapping(gemini_files, start_page, verbose=args.verbose)
         
         # Get unique pages needed for all programs
         unique_pages = get_unique_pages_from_programs(programs)
@@ -821,8 +809,8 @@ def main():
             
             print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}' (pages: {pages_str})...")
             
-            if args.debug:
-                print(f"🔍 DEBUG: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
+            if args.verbose:
+                print(f"🔍 VERBOSE: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
             
             try:
                 # Get the specific Gemini files for this program
@@ -835,10 +823,10 @@ def main():
                     else:
                         missing_pages_for_program.append(page)
                 
-                if args.debug:
-                    print(f"🔍 DEBUG: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
+                if args.verbose:
+                    print(f"🔍 VERBOSE: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
                     if missing_pages_for_program:
-                        print(f"🔍 DEBUG: Missing pages for '{program_name}': {missing_pages_for_program}")
+                        print(f"🔍 VERBOSE: Missing pages for '{program_name}': {missing_pages_for_program}")
                 
                 if not files_for_program:
                     skip_msg = f"No files found for '{program_name}' on pages {page_numbers}"
@@ -850,7 +838,7 @@ def main():
                     print(f"⚠️  Partial data: missing {len(missing_pages_for_program)} pages for '{program_name}': {missing_pages_for_program}")
                 
                 print(f"🤖 Calling Gemini AI to extract source code...")
-                source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=args.debug)
+                source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=args.verbose)
                 
                 if not source_code.strip():
                     skip_msg = f"Empty response from Gemini for '{program_name}'"
@@ -866,9 +854,9 @@ def main():
                 error_msg = f"Error processing '{program_name}': {e}"
                 print(f"❌ {error_msg}")
                 failed_programs.append((program_name, str(e)))
-                if args.debug:
+                if args.verbose:
                     import traceback
-                    print(f"🔍 DEBUG: Full traceback for '{program_name}':")
+                    print(f"🔍 VERBOSE: Full traceback for '{program_name}':")
                     traceback.print_exc()
         
         # Final summary for both phases

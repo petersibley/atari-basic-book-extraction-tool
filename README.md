@@ -11,7 +11,7 @@ Scripts for extracting Atari BASIC program listings from scanned book images usi
 - **AI OCR:** Uses Gemini for program identification and code extraction.
 - **Output:** Individual markdown files per program, plus a JSON index.
 - **Smart Caching:** Skips already-downloaded/converted files.
-- **Debug & Step Control:** Run extraction steps independently, debug output, or just download/convert.
+- **Verbose & Step Control:** Run extraction steps independently, verbose output, or just download/convert.
 
 ## Requirements
 
@@ -62,15 +62,14 @@ python process.py
 ### Options
 
 - `--start N` / `--end N`: Page range (default: 1–10)
-- `--page N`: Single page (overrides start/end)
 - `--output-dir DIR`: Output directory (default: transcriptions)
-- `--pause SECONDS`: Delay between downloads (default: 0.25)
+- `--download-pause SECONDS`: Delay between downloads (default: 0.25)
 - `--locate-programs-only`: Only identify programs, save JSON
 - `--extract-source-only`: Only extract code (requires `--program-list`)
 - `--program-list FILE`: JSON file from program location extraction
-- `--download-only`: Download/convert images, then exit
-- `--convert-only`: Convert GIFs to PNG, then exit
-- `--debug`: Verbose Gemini output
+- `--download-images-only`: Download/convert images, then exit
+- `--convert-images-only`: Convert GIFs to PNG, then exit
+- `--verbose`: Verbose Gemini output
 
 ## Output
 
