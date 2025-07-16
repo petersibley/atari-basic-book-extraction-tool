@@ -53,6 +53,8 @@ python process.py --start 1 --end 25 --locate-programs-only --output-dir results
 python process.py --extract-source-only --program-list results/program_list.json --output-dir results
 ```
 
+For full book: use `--start 1 --end 185`.
+
 ### All-in-One (both extraction steps, pages 1-10 by default)
 
 ```bash
@@ -105,8 +107,3 @@ python process.py
 
 ```
 
-## Notes
-
-- Requires a valid Gemini API key ([get one here](https://aistudio.google.com/app/apikey)).
-- Cleans up uploaded files after processing.
-- For full book: use `--start 1 --end 185`.
