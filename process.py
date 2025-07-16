@@ -74,6 +74,22 @@ def delete_gemini_file(file_name, client):
     client.files.delete(name=file_name)
     print(f"Deleted Gemini file: {file_name}")
 
+def save_transcription_to_markdown(transcription, page_number, output_dir="transcriptions"):
+    """Save transcription result to a markdown file."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create filename based on page number
+    filename = f"page_{page_number:02d}.md"
+    output_path = output_dir / filename
+    
+    # Write transcription to file
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(transcription)
+    
+    print(f"Saved transcription to: {output_path}")
+    return output_path
+
 def transcribe_atari_basic(file, client):
     prompt = (
         "Please extract and transcribe all text content from this image, paying special attention to "
@@ -96,13 +112,26 @@ def main():
     if not png_files:
         print("No images downloaded.")
         return
-    image_path = png_files[0]
+    
+    # Process one page at a time (for now, use page 2 if available)
+    image_path = png_files[0]  # Use page 1
+    
+    # Determine page number from filename
+    page_number = int(Path(image_path).stem.replace("page", ""))
+    
     # Set up Gemini client (API key must be in GEMINI_API_KEY env var)
     client = genai.Client()
     gemini_file = upload_image_to_gemini(image_path, client)
     result = transcribe_atari_basic(gemini_file, client)
+    
+    # Save transcription to markdown file
+    output_path = save_transcription_to_markdown(result, page_number)
+    
+    print(f"\nProcessed: {image_path}")
+    print(f"Output saved to: {output_path}")
     print("\nGemini Transcription Result:\n")
     print(result)
+    
     # Clean up uploaded file
     delete_gemini_file(gemini_file.name, client)
 
