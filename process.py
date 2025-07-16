@@ -172,6 +172,10 @@ def extract_program_source(files, program_name, client):
 
 def parse_program_list(response_text):
     """Parse the JSON response from program identification phase."""
+    if not response_text:
+        print("Error: Empty response from Gemini")
+        return []
+    
     try:
         # Extract JSON from markdown code block if present
         json_match = re.search(r'```json\n(.*?)\n```', response_text, re.DOTALL)
