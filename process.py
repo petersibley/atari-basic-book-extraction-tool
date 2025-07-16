@@ -200,6 +200,24 @@ def upload_images_for_pages(page_numbers, client, debug=False):
     
     return page_to_gemini_file
 
+def create_page_to_file_mapping(gemini_files, start_page, debug=False):
+    """Create a mapping from page numbers to gemini files for sequential uploads."""
+    page_to_gemini_file = {}
+    
+    if debug:
+        print(f"🔍 DEBUG: Creating page-to-file mapping for {len(gemini_files)} files starting from page {start_page}")
+    
+    for i, gemini_file in enumerate(gemini_files):
+        page_num = start_page + i
+        page_to_gemini_file[page_num] = gemini_file
+        if debug:
+            print(f"🔍 DEBUG: Mapped page {page_num} -> {gemini_file.name}")
+    
+    if debug:
+        print(f"🔍 DEBUG: Created mapping for pages: {sorted(page_to_gemini_file.keys())}")
+    
+    return page_to_gemini_file
+
 def delete_gemini_file(file_name, client):
     client.files.delete(name=file_name)
     print(f"Deleted Gemini file: {file_name}")
@@ -755,7 +773,7 @@ def main():
             
             return
         
-        # Default: Run both phases
+        # Default: Run both phases with optimization
         # PHASE 1: Identify all BASIC programs
         print(f"\n🔍 Phase 1: Identifying BASIC programs...")
         program_list_response = identify_basic_programs(gemini_files, client, debug=args.debug)
@@ -773,35 +791,110 @@ def main():
         # Save program list to JSON for debugging
         save_program_list_to_json(programs, args.output_dir)
         
-        # PHASE 2: Extract source code for each program
-        print(f"\n📝 Phase 2: Extracting source code for each program...")
+        # OPTIMIZATION: Create page-to-file mapping for Phase 2 reuse
+        print(f"\n🔧 Creating page-to-file mapping for optimized Phase 2...")
+        page_to_gemini_file = create_page_to_file_mapping(gemini_files, start_page, debug=args.debug)
+        
+        # Get unique pages needed for all programs
+        unique_pages = get_unique_pages_from_programs(programs)
+        available_pages = [page for page in unique_pages if page in page_to_gemini_file]
+        missing_pages = [page for page in unique_pages if page not in page_to_gemini_file]
+        
+        print(f"📊 Program optimization analysis:")
+        print(f"  - Programs need {len(unique_pages)} unique pages: {', '.join(map(str, unique_pages))}")
+        print(f"  - Available from upload: {len(available_pages)} pages")
+        print(f"  - Missing from upload: {len(missing_pages)} pages")
+        
+        if missing_pages:
+            print(f"⚠️  Missing pages will cause some programs to be skipped: {missing_pages}")
+        
+        # PHASE 2: Extract source code for each program using optimized approach
+        print(f"\n📝 Phase 2: Extracting source code for each program (optimized)...")
         saved_files = []
+        skipped_programs = []
+        failed_programs = []
         
         for i, program in enumerate(programs, 1):
             program_name = program['name']
-            print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}'...")
+            page_numbers = program.get('pages', [])
+            pages_str = ', '.join(map(str, page_numbers))
+            
+            print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}' (pages: {pages_str})...")
+            
+            if args.debug:
+                print(f"🔍 DEBUG: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
             
             try:
-                page_numbers = program.get('pages', [])
-                source_code = extract_program_source(gemini_files, program_name, page_numbers, client, debug=args.debug)
+                # Get the specific Gemini files for this program
+                files_for_program = []
+                missing_pages_for_program = []
+                
+                for page in page_numbers:
+                    if page in page_to_gemini_file:
+                        files_for_program.append(page_to_gemini_file[page])
+                    else:
+                        missing_pages_for_program.append(page)
+                
+                if args.debug:
+                    print(f"🔍 DEBUG: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
+                    if missing_pages_for_program:
+                        print(f"🔍 DEBUG: Missing pages for '{program_name}': {missing_pages_for_program}")
+                
+                if not files_for_program:
+                    skip_msg = f"No files found for '{program_name}' on pages {page_numbers}"
+                    print(f"⚠️  {skip_msg}")
+                    skipped_programs.append((program_name, skip_msg))
+                    continue
+                
+                if missing_pages_for_program:
+                    print(f"⚠️  Partial data: missing {len(missing_pages_for_program)} pages for '{program_name}': {missing_pages_for_program}")
+                
+                print(f"🤖 Calling Gemini AI to extract source code...")
+                source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=args.debug)
+                
+                if not source_code.strip():
+                    skip_msg = f"Empty response from Gemini for '{program_name}'"
+                    print(f"⚠️  {skip_msg}")
+                    skipped_programs.append((program_name, skip_msg))
+                    continue
+                
                 output_path = save_program_to_file(program_name, source_code, args.output_dir)
                 saved_files.append(output_path)
-                print(f"✅ Successfully saved '{program_name}'")
+                print(f"✅ Successfully saved '{program_name}' -> {output_path}")
+                
             except Exception as e:
-                print(f"❌ Error processing '{program_name}': {e}")
+                error_msg = f"Error processing '{program_name}': {e}"
+                print(f"❌ {error_msg}")
+                failed_programs.append((program_name, str(e)))
+                if args.debug:
+                    import traceback
+                    print(f"🔍 DEBUG: Full traceback for '{program_name}':")
+                    traceback.print_exc()
         
-        # Summary
+        # Final summary for both phases
         print(f"\n🎉 Processing complete!")
         print(f"📊 Summary:")
         print(f"  - Images processed: {len(png_files)}")
         print(f"  - Programs found: {len(programs)}")
-        print(f"  - Programs saved: {len(saved_files)}")
+        print(f"  - Successfully saved: {len(saved_files)}")
+        print(f"  - Skipped (no data): {len(skipped_programs)}")
+        print(f"  - Failed (errors): {len(failed_programs)}")
         print(f"  - Output directory: {args.output_dir}")
         
         if saved_files:
-            print(f"\n📁 Saved program files:")
-            for file_path in saved_files:
-                print(f"  - {file_path}")
+            print(f"\n✅ Successfully saved programs:")
+            for i, file_path in enumerate(saved_files, 1):
+                print(f"  {i}. {file_path}")
+        
+        if skipped_programs:
+            print(f"\n⚠️  Skipped programs ({len(skipped_programs)}):")
+            for program_name, reason in skipped_programs:
+                print(f"  - {program_name}: {reason}")
+        
+        if failed_programs:
+            print(f"\n❌ Failed programs ({len(failed_programs)}):")
+            for program_name, error in failed_programs:
+                print(f"  - {program_name}: {error}")
     
     finally:
         # Clean up uploaded files (only if gemini_files exists)
