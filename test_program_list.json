@@ -1,0 +1,19 @@
+{
+  "programs": [
+    {
+      "name": "Acey Ducey",
+      "pages": [2],
+      "description": "Simulation of the Acey Ducey card game..."
+    },
+    {
+      "name": "Amazing",
+      "pages": [3],
+      "description": "Generates different mazes with guaranteed single path..."
+    },
+    {
+      "name": "Animal",
+      "pages": [4, 5],
+      "description": "Game where computer tries to guess your animal..."
+    }
+  ]
+}

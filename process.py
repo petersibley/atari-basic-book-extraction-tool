@@ -84,6 +84,40 @@ def upload_multiple_images_to_gemini(image_paths, client):
         uploaded_files.append(file)
     return uploaded_files
 
+def get_unique_pages_from_programs(programs):
+    """Extract all unique page numbers needed for all programs."""
+    unique_pages = set()
+    for program in programs:
+        pages = program.get('pages', [])
+        unique_pages.update(pages)
+    return sorted(list(unique_pages))
+
+def get_png_paths_for_pages(page_numbers):
+    """Map page numbers to their PNG file paths."""
+    png_paths = {}
+    for page_num in page_numbers:
+        png_path = Path("png_output") / f"page{page_num}.png"
+        if png_path.exists():
+            png_paths[page_num] = png_path
+        else:
+            print(f"⚠️  PNG file not found for page {page_num}: {png_path}")
+    return png_paths
+
+def upload_images_for_pages(page_numbers, client):
+    """Upload only the needed images and return page-to-handle mapping."""
+    png_paths = get_png_paths_for_pages(page_numbers)
+    page_to_gemini_file = {}
+    
+    print(f"📤 Uploading {len(png_paths)} specific images (pages: {', '.join(map(str, page_numbers))})...")
+    
+    for page_num, png_path in png_paths.items():
+        print(f"Uploading page {page_num}: {png_path}...")
+        gemini_file = upload_image_to_gemini(png_path, client)
+        page_to_gemini_file[page_num] = gemini_file
+    
+    print(f"✅ Uploaded {len(page_to_gemini_file)} images successfully")
+    return page_to_gemini_file
+
 def delete_gemini_file(file_name, client):
     client.files.delete(name=file_name)
     print(f"Deleted Gemini file: {file_name}")
@@ -202,6 +236,43 @@ def extract_program_source(files, program_name, page_numbers, client, debug=Fals
         print(f"\n=== DEBUG: Phase 2 Response for '{program_name}' ===")
         print(f"Pages: {pages_str}")
         print(f"Filtered files: {len(filtered_files)}/{len(files)}")
+        print(response.text)
+        print("=== END DEBUG ===\n")
+    
+    return response.text
+
+def extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=False):
+    """Phase 2: Extract source code using pre-filtered files (optimized version)."""
+    pages_str = ", ".join(map(str, page_numbers)) if page_numbers else "all pages"
+    prompt = (
+        f"PHASE 2: SOURCE CODE EXTRACTION\n\n"
+        f"Please extract the complete BASIC source code for the program '{program_name}' from the provided images "
+        f"(expected on pages: {pages_str}). "
+        f"Look for the source code listing that appears in terminal-like computer typeface with line numbers.\n\n"
+        f"IMPORTANT GUIDELINES:\n"
+        f"- Extract ONLY the BASIC source code (lines starting with numbers like 10, 20, 30, etc.)\n"
+        f"- DO NOT include program execution output, sample runs, or example gameplay\n"
+        f"- Maintain exact formatting, spacing, and line numbers as they appear\n"
+        f"- If the program spans multiple pages, combine all source lines in order\n"
+        f"- Include any comments or REM statements that are part of the source code\n\n"
+        f"Return the source code in markdown format:\n"
+        f"```basic\n"
+        f"[SOURCE CODE HERE]\n"
+        f"```"
+    )
+    
+    print(f"Phase 2: Extracting source code for '{program_name}' (pages: {pages_str}, {len(files_for_program)} images)...")
+    contents = [prompt] + files_for_program
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents
+    )
+    
+    if debug:
+        print(f"\n=== DEBUG: Phase 2 Response for '{program_name}' ===")
+        print(f"Pages: {pages_str}")
+        print(f"Images provided: {len(files_for_program)}")
         print(response.text)
         print("=== END DEBUG ===\n")
     
@@ -401,23 +472,28 @@ def main():
         print(f"✅ Converted {len(png_files)} images")
         return
     
-    # Download and convert images (for all other modes)
-    print(f"\n📥 Downloading and converting {end_page - start_page + 1} images...")
-    urls = generate_atari_image_urls(start=start_page, end=end_page)
-    png_files = download_images(urls, pause_seconds=args.pause)
-    if not png_files:
-        print("❌ No images downloaded.")
-        return
-    
-    print(f"✅ Successfully processed {len(png_files)} images")
-    
     # Set up Gemini client (API key must be in GEMINI_API_KEY env var)
     client = genai.Client()
     
-    # Upload all images to Gemini
-    print(f"\n📤 Uploading {len(png_files)} images to Gemini...")
-    gemini_files = upload_multiple_images_to_gemini(png_files, client)
-    print(f"✅ All images uploaded successfully")
+    # Handle phase-2-only mode differently (no bulk upload needed)
+    if args.phase_2_only:
+        # Phase 2 only mode handles its own image upload optimization
+        pass
+    else:
+        # Download and convert images (for all other modes)
+        print(f"\n📥 Downloading and converting {end_page - start_page + 1} images...")
+        urls = generate_atari_image_urls(start=start_page, end=end_page)
+        png_files = download_images(urls, pause_seconds=args.pause)
+        if not png_files:
+            print("❌ No images downloaded.")
+            return
+        
+        print(f"✅ Successfully processed {len(png_files)} images")
+        
+        # Upload all images to Gemini
+        print(f"\n📤 Uploading {len(png_files)} images to Gemini...")
+        gemini_files = upload_multiple_images_to_gemini(png_files, client)
+        print(f"✅ All images uploaded successfully")
     
     try:
         # Handle phase-1-only mode
@@ -439,7 +515,7 @@ def main():
             save_program_list_to_json(programs, args.output_dir)
             return
         
-        # Handle phase-2-only mode
+        # Handle phase-2-only mode (OPTIMIZED)
         if args.phase_2_only:
             if not args.program_list:
                 print("❌ --program-list is required for --phase-2-only mode")
@@ -454,22 +530,49 @@ def main():
             
             print(f"✅ Loaded {len(programs)} programs from file")
             
-            # Extract source code for each program
-            saved_files = []
-            for i, program in enumerate(programs, 1):
-                program_name = program['name']
-                print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}'...")
-                
-                try:
-                    page_numbers = program.get('pages', [])
-                    source_code = extract_program_source(gemini_files, program_name, page_numbers, client, debug=args.debug)
-                    output_path = save_program_to_file(program_name, source_code, args.output_dir)
-                    saved_files.append(output_path)
-                    print(f"✅ Successfully saved '{program_name}'")
-                except Exception as e:
-                    print(f"❌ Error processing '{program_name}': {e}")
+            # OPTIMIZATION: Get unique pages and upload only those
+            unique_pages = get_unique_pages_from_programs(programs)
+            print(f"📊 Programs need {len(unique_pages)} unique pages: {', '.join(map(str, unique_pages))}")
             
-            print(f"\n🎉 Phase 2 complete! Saved {len(saved_files)} programs")
+            # Upload only the needed images
+            page_to_gemini_file = upload_images_for_pages(unique_pages, client)
+            
+            if not page_to_gemini_file:
+                print("❌ No images could be uploaded.")
+                return
+            
+            try:
+                # Extract source code for each program using optimized approach
+                saved_files = []
+                for i, program in enumerate(programs, 1):
+                    program_name = program['name']
+                    print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}'...")
+                    
+                    try:
+                        page_numbers = program.get('pages', [])
+                        # Get the specific Gemini files for this program
+                        files_for_program = [page_to_gemini_file[page] for page in page_numbers if page in page_to_gemini_file]
+                        
+                        if not files_for_program:
+                            print(f"⚠️  No files found for '{program_name}' on pages {page_numbers}")
+                            continue
+                        
+                        source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, debug=args.debug)
+                        output_path = save_program_to_file(program_name, source_code, args.output_dir)
+                        saved_files.append(output_path)
+                        print(f"✅ Successfully saved '{program_name}'")
+                    except Exception as e:
+                        print(f"❌ Error processing '{program_name}': {e}")
+                
+                print(f"\n🎉 Phase 2 complete! Saved {len(saved_files)} programs")
+                
+            finally:
+                # Clean up uploaded files
+                print(f"\n🧹 Cleaning up uploaded files...")
+                for gemini_file in page_to_gemini_file.values():
+                    delete_gemini_file(gemini_file.name, client)
+                print("✅ Cleanup complete")
+            
             return
         
         # Default: Run both phases
@@ -521,11 +624,12 @@ def main():
                 print(f"  - {file_path}")
     
     finally:
-        # Clean up uploaded files
-        print(f"\n🧹 Cleaning up uploaded files...")
-        for gemini_file in gemini_files:
-            delete_gemini_file(gemini_file.name, client)
-        print("✅ Cleanup complete")
+        # Clean up uploaded files (only if gemini_files exists)
+        if 'gemini_files' in locals():
+            print(f"\n🧹 Cleaning up uploaded files...")
+            for gemini_file in gemini_files:
+                delete_gemini_file(gemini_file.name, client)
+            print("✅ Cleanup complete")
 
 if __name__ == "__main__":
     main()
