@@ -1,3 +1,4 @@
 Pillow
 google-genai
 requests 
+black 
