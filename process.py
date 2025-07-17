@@ -1,3 +1,21 @@
+"""
+Atari BASIC Book Extraction Tool
+
+This script automates the extraction of Atari BASIC program listings from scanned book pages. It downloads page images from the Atari Archives, converts them to PNG, and uses Google Gemini AI to identify and transcribe BASIC program listings into markdown files. The workflow includes:
+
+1. Downloading and converting images for a specified page range.
+2. Uploading images to Gemini and identifying all BASIC programs and their locations.
+3. Extracting the source code for each program and saving it in markdown format.
+
+Usage:
+  python process.py [--start N] [--end M] [--output-dir DIR] [options]
+
+Options allow for running only specific phases (download, conversion, program location extraction, or source extraction).
+
+Requirements:
+- GEMINI_API_KEY environment variable must be set
+- Internet connection for image downloads and API calls
+"""
 #!/usr/bin/env python3
 import time
 import requests
@@ -8,14 +26,46 @@ import os
 import argparse
 import json
 import re
+from typing import Any, Optional
 
-def generate_atari_image_urls(start=1, end=185):
-    base_img_url = "https://www.atariarchives.org/basicgames/pages/page"
-    return [f"{base_img_url}{page}.gif" for page in range(start, end + 1)]
+# Module-level constants
+ATARI_BASE_IMG_URL = "https://www.atariarchives.org/basicgames/pages/page"
+DEFAULT_OUTPUT_DIR = "transcriptions"
+DEFAULT_DOWNLOADS_DIR = "downloads"
+DEFAULT_PNG_OUTPUT_DIR = "png_output"
+GEMINI_MODEL_NAME = "gemini-2.5-flash"
 
-def convert_to_png(src_path, dest_dir="png_output", verbose=False):
+# Helper function: check if a file exists at the given path
+def file_exists(path: Path) -> bool:
+    """Check if a file exists at the given path."""
+    return path.exists()
+
+# Helper function: print a summary of the download and conversion process
+def print_download_summary(downloaded_files: list[Path], cached_count: int, download_count: int, download_errors: list, convert_errors: list) -> None:
+    """Print a summary of the download and conversion process."""
+    print(f"📊 Download summary: {len(downloaded_files)} successful, {cached_count} cached, {download_count} downloaded")
+    if download_errors:
+        print(f"❌ Download failures ({len(download_errors)}):")
+        for url, error in download_errors:
+            print(f"  - {url}: {error}")
+    if convert_errors:
+        print(f"❌ Conversion failures ({len(convert_errors)}):")
+        for file_path, error in convert_errors:
+            print(f"  - {file_path}: {error}")
+
+# === Image Download and Conversion Utilities ===
+def generate_atari_image_urls(start: int = 1, end: int = 185) -> list[str]:
+    """Generate a list of Atari BASIC book page image URLs for the given page range."""
+    if start < 1 or end < start:
+        raise ValueError("Invalid page range. Start page must be 1 or greater, and end page must be at least start page.")
+    return [f"{ATARI_BASE_IMG_URL}{page}.gif" for page in range(start, end + 1)]
+
+def convert_to_png(src_path: Path, dest_dir: Optional[str] = "png_output", verbose: bool = False) -> Path:
     """Converts an image file to PNG format using Pillow, saving to dest_dir."""
-    dest_dir = Path(dest_dir)
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source file not found: {src_path}")
+    
+    dest_dir = Path(dest_dir or DEFAULT_PNG_OUTPUT_DIR)
     dest_dir.mkdir(parents=True, exist_ok=True)
     png_path = dest_dir / (Path(src_path).stem + ".png")
     
@@ -41,8 +91,12 @@ def convert_to_png(src_path, dest_dir="png_output", verbose=False):
         print(f"❌ Failed to convert {src_path} to PNG: {e}")
         raise
 
-def download_images(urls, save_dir="downloads", pause_seconds=0.25, verbose=False):
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
+def download_images(urls: list[str], save_dir: Optional[str] = "downloads", pause_seconds: float = 0.25, verbose: bool = False) -> list[Path]:
+    """Download images from the given URLs, convert to PNG, and return list of PNG Paths."""
+    if not urls:
+        raise ValueError("No URLs provided for image download.")
+    
+    Path(save_dir or DEFAULT_DOWNLOADS_DIR).mkdir(parents=True, exist_ok=True)
     downloaded_files = []
     cached_count = 0
     download_count = 0
@@ -56,8 +110,7 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.25, verbose=Fals
         filename = url.split("/")[-1]
         save_path = Path(save_dir) / filename
         
-        # Check if file already exists
-        if save_path.exists():
+        if file_exists(save_path):
             print(f"📁 ({i}/{len(urls)}) Using cached file: {save_path}")
             cached_count += 1
         else:
@@ -69,7 +122,6 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.25, verbose=Fals
                     f.write(response.content)
                 print(f"✅ Downloaded: {save_path}")
                 download_count += 1
-                # Only pause after actual downloads to avoid hammering the server
                 time.sleep(pause_seconds)
             except Exception as e:
                 error_msg = f"Failed to download {url}: {e}"
@@ -85,25 +137,19 @@ def download_images(urls, save_dir="downloads", pause_seconds=0.25, verbose=Fals
             print(f"❌ {error_msg}")
             convert_errors.append((str(save_path), str(e)))
     
-    # Summary
-    print(f"📊 Download summary: {len(downloaded_files)} successful, {cached_count} cached, {download_count} downloaded")
-    
-    if download_errors:
-        print(f"❌ Download failures ({len(download_errors)}):")
-        for url, error in download_errors:
-            print(f"  - {url}: {error}")
-    
-    if convert_errors:
-        print(f"❌ Conversion failures ({len(convert_errors)}):")
-        for file_path, error in convert_errors:
-            print(f"  - {file_path}: {error}")
+    print_download_summary(downloaded_files, cached_count, download_count, download_errors, convert_errors)
     
     if verbose:
         print(f"🔍 VERBOSE: Final downloaded files count: {len(downloaded_files)}")
     
     return downloaded_files
 
-def upload_image_to_gemini(image_path, client):
+# === Gemini API Upload Utilities ===
+def upload_image_to_gemini(image_path: Path, client: Any) -> Any:
+    """Upload a single image to Gemini and return the uploaded file object."""
+    if not image_path.exists():
+        raise FileNotFoundError(f"Image file not found for upload: {image_path}")
+    
     file = client.files.upload(file=str(image_path))
     # Poll for upload completion
     while file.state == "PROCESSING":
@@ -117,8 +163,11 @@ def upload_image_to_gemini(image_path, client):
     print(f"Upload complete: {file.name} (state: {file.state})")
     return file
 
-def upload_multiple_images_to_gemini(image_paths, client):
-    """Upload multiple images to Gemini and return list of uploaded files."""
+def upload_multiple_images_to_gemini(image_paths: list[Path], client: Any) -> list[Any]:
+    """Upload multiple images to Gemini and return list of uploaded file objects."""
+    if not image_paths:
+        raise ValueError("No image paths provided for Gemini upload.")
+    
     uploaded_files = []
     for image_path in image_paths:
         print(f"Uploading {image_path}...")
@@ -126,16 +175,22 @@ def upload_multiple_images_to_gemini(image_paths, client):
         uploaded_files.append(file)
     return uploaded_files
 
-def get_unique_pages_from_programs(programs):
+# === Program Location and Source Extraction Utilities ===
+def get_unique_pages_from_programs(programs: list[dict]) -> list[int]:
     """Extract all unique page numbers needed for all programs."""
+    if not programs:
+        return []
     unique_pages = set()
     for program in programs:
         pages = program.get('pages', [])
         unique_pages.update(pages)
     return sorted(list(unique_pages))
 
-def get_png_paths_for_pages(page_numbers, verbose=False):
-    """Map page numbers to their PNG file paths."""
+def get_png_paths_for_pages(page_numbers: list[int], verbose: bool = False) -> dict[int, Path]:
+    """Map page numbers to their PNG file paths. Returns a dict of page number to Path."""
+    if not page_numbers:
+        return {}
+    
     png_paths = {}
     missing_files = []
     
@@ -143,7 +198,7 @@ def get_png_paths_for_pages(page_numbers, verbose=False):
         print(f"🔍 VERBOSE: Checking PNG files for {len(page_numbers)} pages: {page_numbers}")
     
     for page_num in page_numbers:
-        png_path = Path("png_output") / f"page{page_num}.png"
+        png_path = Path(DEFAULT_PNG_OUTPUT_DIR) / f"page{page_num}.png"
         if png_path.exists():
             png_paths[page_num] = png_path
             if verbose:
@@ -159,8 +214,11 @@ def get_png_paths_for_pages(page_numbers, verbose=False):
     
     return png_paths
 
-def upload_images_for_pages(page_numbers, client, verbose=False):
-    """Upload only the needed images and return page-to-handle mapping."""
+def upload_images_for_pages(page_numbers: list[int], client: Any, verbose: bool = False) -> dict[int, Any]:
+    """Upload only the needed images and return a mapping from page number to Gemini file object."""
+    if not page_numbers:
+        raise ValueError("No page numbers provided for image upload.")
+    
     png_paths = get_png_paths_for_pages(page_numbers, verbose=verbose)
     page_to_gemini_file = {}
     upload_errors = []
@@ -200,13 +258,15 @@ def upload_images_for_pages(page_numbers, client, verbose=False):
     
     return page_to_gemini_file
 
-def create_page_to_file_mapping(gemini_files, start_page, verbose=False):
+def create_page_to_file_mapping(gemini_files: list[Any], start_page: int, verbose: bool = False) -> dict[int, Any]:
     """Create a mapping from page numbers to gemini files for sequential uploads."""
-    page_to_gemini_file = {}
+    if not gemini_files:
+        raise ValueError("No Gemini files provided for mapping.")
     
     if verbose:
         print(f"🔍 VERBOSE: Creating page-to-file mapping for {len(gemini_files)} files starting from page {start_page}")
     
+    page_to_gemini_file = {}
     for i, gemini_file in enumerate(gemini_files):
         page_num = start_page + i
         page_to_gemini_file[page_num] = gemini_file
@@ -218,13 +278,17 @@ def create_page_to_file_mapping(gemini_files, start_page, verbose=False):
     
     return page_to_gemini_file
 
-def delete_gemini_file(file_name, client):
+def delete_gemini_file(file_name: str, client: Any) -> None:
+    """Delete a file from Gemini by file name."""
+    if not file_name:
+        raise ValueError("File name is empty for deletion.")
     client.files.delete(name=file_name)
     print(f"Deleted Gemini file: {file_name}")
 
-def save_transcription_to_markdown(transcription, page_range, output_dir="transcriptions"):
-    """Save transcription result to a markdown file."""
-    output_dir = Path(output_dir)
+# === Program List and File I/O Utilities ===
+def save_transcription_to_markdown(transcription: str, page_range: list[int], output_dir: Optional[str] = "transcriptions") -> Path:
+    """Save transcription result to a markdown file and return the output Path."""
+    output_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create filename based on page range
@@ -241,8 +305,11 @@ def save_transcription_to_markdown(transcription, page_range, output_dir="transc
     print(f"Saved transcription to: {output_path}")
     return output_path
 
-def identify_basic_programs(files, client, verbose=False):
-    """Program Location Extraction: Scan all images to identify BASIC program listings and their names."""
+def identify_basic_programs(files: list[Any], client: Any, verbose: bool = False) -> str:
+    """Scan all images to identify BASIC program listings and their names. Returns Gemini response text."""
+    if not files:
+        raise ValueError("No Gemini files provided for program location extraction.")
+    
     prompt = (
         "PROGRAM LOCATION EXTRACTION\n\n"
         "Please scan through all the provided images of Atari BASIC book pages and identify every BASIC program listing. "
@@ -272,7 +339,7 @@ def identify_basic_programs(files, client, verbose=False):
     contents = [prompt] + files
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_MODEL_NAME,
         contents=contents
     )
     
@@ -283,8 +350,8 @@ def identify_basic_programs(files, client, verbose=False):
     
     return response.text
 
-def filter_files_by_pages(all_files, page_numbers):
-    """Filter gemini_files to only include files for specific page numbers."""
+def filter_files_by_pages(all_files: list[Any], page_numbers: list[int]) -> list[Any]:
+    """Filter Gemini files to only include files for specific page numbers."""
     if not page_numbers:
         return all_files
     
@@ -301,8 +368,15 @@ def filter_files_by_pages(all_files, page_numbers):
     
     return filtered_files
 
-def extract_program_source(files, program_name, page_numbers, client, verbose=False):
-    """Program Source Extraction: Extract source code for a specific program."""
+def extract_program_source(files: list[Any], program_name: str, page_numbers: list[int], client: Any, verbose: bool = False) -> str:
+    """Extract source code for a specific program from Gemini files. Returns Gemini response text."""
+    if not files:
+        raise ValueError("No Gemini files provided for program source extraction.")
+    if not program_name:
+        raise ValueError("Program name is empty for source extraction.")
+    if not page_numbers:
+        raise ValueError("Page numbers are empty for source extraction.")
+    
     # Filter files to only include relevant pages
     filtered_files = filter_files_by_pages(files, page_numbers)
     
@@ -328,7 +402,7 @@ def extract_program_source(files, program_name, page_numbers, client, verbose=Fa
     contents = [prompt] + filtered_files
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_MODEL_NAME,
         contents=contents
     )
     
@@ -341,8 +415,15 @@ def extract_program_source(files, program_name, page_numbers, client, verbose=Fa
     
     return response.text
 
-def extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=False):
-    """Program Source Extraction: Extract source code using pre-filtered files (optimized version)."""
+def extract_program_source_optimized(files_for_program: list[Any], program_name: str, page_numbers: list[int], client: Any, verbose: bool = False) -> str:
+    """Extract source code using pre-filtered files (optimized version). Returns Gemini response text."""
+    if not files_for_program:
+        raise ValueError("No Gemini files provided for optimized source extraction.")
+    if not program_name:
+        raise ValueError("Program name is empty for optimized source extraction.")
+    if not page_numbers:
+        raise ValueError("Page numbers are empty for optimized source extraction.")
+    
     pages_str = ", ".join(map(str, page_numbers)) if page_numbers else "all pages"
     prompt = (
         f"PROGRAM SOURCE EXTRACTION\n\n"
@@ -365,7 +446,7 @@ def extract_program_source_optimized(files_for_program, program_name, page_numbe
     contents = [prompt] + files_for_program
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_MODEL_NAME,
         contents=contents
     )
     
@@ -378,8 +459,8 @@ def extract_program_source_optimized(files_for_program, program_name, page_numbe
     
     return response.text
 
-def parse_program_list(response_text, verbose=False):
-    """Parse the JSON response from program identification phase."""
+def parse_program_list(response_text: str, verbose: bool = False) -> list[dict]:
+    """Parse the JSON response from program identification phase. Returns a list of program dicts."""
     if not response_text:
         print("❌ Error: Empty response from Gemini")
         return []
@@ -419,9 +500,9 @@ def parse_program_list(response_text, verbose=False):
         print(f"Raw response text (first 200 chars): {response_text[:200]}...")
         return []
 
-def save_program_list_to_json(programs, output_dir="transcriptions"):
-    """Save program list to JSON file for debugging/reuse."""
-    output_dir = Path(output_dir)
+def save_program_list_to_json(programs: list[dict], output_dir: Optional[str] = "transcriptions") -> Path:
+    """Save program list to JSON file for debugging/reuse. Returns the output Path."""
+    output_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     json_path = output_dir / "program_list.json"
@@ -432,8 +513,8 @@ def save_program_list_to_json(programs, output_dir="transcriptions"):
     print(f"Saved program list to: {json_path}")
     return json_path
 
-def load_program_list_from_json(json_path, verbose=False):
-    """Load program list from JSON file."""
+def load_program_list_from_json(json_path: str, verbose: bool = False) -> list[dict]:
+    """Load program list from JSON file. Returns a list of program dicts."""
     if verbose:
         print(f"🔍 VERBOSE: Loading program list from {json_path}")
     
@@ -459,8 +540,8 @@ def load_program_list_from_json(json_path, verbose=False):
         print(f"❌ Error loading program list from {json_path}: {e}")
         return []
 
-def save_program_to_file(program_name, source_code, output_dir="programs"):
-    """Save individual program source code to a markdown file."""
+def save_program_to_file(program_name: str, source_code: str, output_dir: Optional[str] = "programs") -> Path:
+    """Save individual program source code to a markdown file. Returns the output Path."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -480,8 +561,9 @@ def save_program_to_file(program_name, source_code, output_dir="programs"):
     print(f"Saved program '{program_name}' to: {output_path}")
     return output_path
 
-def parse_arguments():
-    """Parse command line arguments."""
+# === Command-Line Argument Parsing ===
+def parse_arguments() -> argparse.Namespace:
+    """Parse command line arguments and return the parsed Namespace."""
     parser = argparse.ArgumentParser(
         description="Atari Basic Book Scan Tools - Extract BASIC programs from scanned book pages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -565,301 +647,197 @@ Requirements:
     
     return parser.parse_args()
 
-def main():
-    # Parse command line arguments
-    args = parse_arguments()
-    
-    # Determine page range
-    start_page = args.start
-    end_page = args.end
-    print(f"Processing pages {start_page} to {end_page}")
-    
-    # Handle download-images-only mode
-    if args.download_images_only:
-        print(f"\n📥 Download-images-only mode: Downloading {end_page - start_page + 1} images...")
-        urls = generate_atari_image_urls(start=start_page, end=end_page)
-        png_files = download_images(urls, pause_seconds=args.download_pause, verbose=args.verbose)
-        print(f"✅ Downloaded and converted {len(png_files)} images")
-        return
-    
-    # Handle convert-images-only mode
-    if args.convert_images_only:
-        print(f"\n🔄 Convert-images-only mode: Converting existing GIF files to PNG...")
-        png_files = []
-        for page in range(start_page, end_page + 1):
-            gif_path = Path("downloads") / f"page{page}.gif"
-            if gif_path.exists():
-                try:
-                    png_path = convert_to_png(gif_path, verbose=args.verbose)
-                    png_files.append(png_path)
-                except Exception as e:
-                    print(f"❌ Failed to convert {gif_path}: {e}")
-        print(f"✅ Converted {len(png_files)} images")
-        return
-    
-    # Set up Gemini client (API key must be in GEMINI_API_KEY env var)
-    client = genai.Client()
-    
-    # Handle extract-source-only mode differently (no bulk upload needed)
-    if args.extract_source_only:
-        # Extract-source-only mode handles its own image upload optimization
-        pass
-    else:
-        # Download and convert images (for all other modes)
-        print(f"\n📥 Downloading and converting {end_page - start_page + 1} images...")
-        urls = generate_atari_image_urls(start=start_page, end=end_page)
-        png_files = download_images(urls, pause_seconds=args.download_pause, verbose=args.verbose)
-        if not png_files:
-            print("❌ No images downloaded.")
-            return
-        
-        print(f"✅ Successfully processed {len(png_files)} images")
-        
-        # Upload all images to Gemini
-        print(f"\n📤 Uploading {len(png_files)} images to Gemini...")
-        gemini_files = upload_multiple_images_to_gemini(png_files, client)
-        print(f"✅ All images uploaded successfully")
-    
-    try:
-        # Handle locate-programs-only mode
-        if args.locate_programs_only:
-            print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
-            program_list_response = identify_basic_programs(gemini_files, client, verbose=args.verbose)
-            programs = parse_program_list(program_list_response, verbose=args.verbose)
-            
-            if not programs:
-                print("❌ No programs found in the images.")
-                return
-            
-            print(f"✅ Found {len(programs)} programs:")
-            for i, program in enumerate(programs, 1):
-                pages_str = ", ".join(map(str, program.get('pages', [])))
-                print(f"  {i}. {program['name']} (pages: {pages_str})")
-            
-            # Save program list to JSON
-            save_program_list_to_json(programs, args.output_dir)
-            return
-        
-        # Handle extract-source-only mode (OPTIMIZED)
-        if args.extract_source_only:
-            if not args.program_list:
-                print("❌ --program-list is required for --extract-source-only mode")
-                return
-            
-            print(f"\n📝 Program Source Extraction: Loading program list from {args.program_list}")
-            programs = load_program_list_from_json(args.program_list, verbose=args.verbose)
-            
-            if not programs:
-                print("❌ No programs found in the program list file.")
-                return
-            
-            print(f"✅ Loaded {len(programs)} programs from file")
-            
-            # OPTIMIZATION: Get unique pages and upload only those
-            unique_pages = get_unique_pages_from_programs(programs)
-            print(f"📊 Programs need {len(unique_pages)} unique pages: {', '.join(map(str, unique_pages))}")
-            
-            # Upload only the needed images
-            page_to_gemini_file = upload_images_for_pages(unique_pages, client, verbose=args.verbose)
-            
-            if not page_to_gemini_file:
-                print("❌ No images could be uploaded.")
-                return
-            
+# === Main Workflow and Orchestration ===
+def handle_download_images_only(start_page: int, end_page: int, download_pause: float, verbose: bool) -> None:
+    """Handle the download-images-only mode: download and convert images, then exit."""
+    print(f"\n📥 Download-images-only mode: Downloading {end_page - start_page + 1} images...")
+    urls = generate_atari_image_urls(start=start_page, end=end_page)
+    png_files = download_images(urls, pause_seconds=download_pause, verbose=verbose)
+    print(f"✅ Downloaded and converted {len(png_files)} images")
+
+def handle_convert_images_only(start_page: int, end_page: int, verbose: bool) -> None:
+    """Handle the convert-images-only mode: convert existing GIF files to PNG, then exit."""
+    print(f"\n🔄 Convert-images-only mode: Converting existing GIF files to PNG...")
+    png_files = []
+    for page in range(start_page, end_page + 1):
+        gif_path = Path(DEFAULT_DOWNLOADS_DIR) / f"page{page}.gif"
+        if gif_path.exists():
             try:
-                # Extract source code for each program using optimized approach
-                saved_files = []
-                skipped_programs = []
-                failed_programs = []
-                
-                for i, program in enumerate(programs, 1):
-                    program_name = program['name']
-                    page_numbers = program.get('pages', [])
-                    pages_str = ', '.join(map(str, page_numbers))
-                    
-                    print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}' (pages: {pages_str})...")
-                    
-                    if args.verbose:
-                        print(f"🔍 VERBOSE: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
-                    
-                    try:
-                        # Get the specific Gemini files for this program
-                        files_for_program = []
-                        missing_pages = []
-                        
-                        for page in page_numbers:
-                            if page in page_to_gemini_file:
-                                files_for_program.append(page_to_gemini_file[page])
-                            else:
-                                missing_pages.append(page)
-                        
-                        if args.verbose:
-                            print(f"🔍 VERBOSE: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
-                            if missing_pages:
-                                print(f"🔍 VERBOSE: Missing pages for '{program_name}': {missing_pages}")
-                        
-                        if not files_for_program:
-                            skip_msg = f"No files found for '{program_name}' on pages {page_numbers}"
-                            print(f"⚠️  {skip_msg}")
-                            skipped_programs.append((program_name, skip_msg))
-                            continue
-                        
-                        if missing_pages:
-                            print(f"⚠️  Partial data: missing {len(missing_pages)} pages for '{program_name}': {missing_pages}")
-                        
-                        print(f"🤖 Calling Gemini AI to extract source code...")
-                        source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=args.verbose)
-                        
-                        if not source_code.strip():
-                            skip_msg = f"Empty response from Gemini for '{program_name}'"
-                            print(f"⚠️  {skip_msg}")
-                            skipped_programs.append((program_name, skip_msg))
-                            continue
-                        
-                        output_path = save_program_to_file(program_name, source_code, args.output_dir)
-                        saved_files.append(output_path)
-                        print(f"✅ Successfully saved '{program_name}' -> {output_path}")
-                        
-                    except Exception as e:
-                        error_msg = f"Error processing '{program_name}': {e}"
-                        print(f"❌ {error_msg}")
-                        failed_programs.append((program_name, str(e)))
-                        if args.verbose:
-                            import traceback
-                            print(f"🔍 VERBOSE: Full traceback for '{program_name}':")
-                            traceback.print_exc()
-                
-                # Final summary for Program Source Extraction
-                print(f"\n🎉 Program Source Extraction complete!")
-                print(f"📊 Summary:")
-                print(f"  - Total programs in list: {len(programs)}")
-                print(f"  - Successfully saved: {len(saved_files)}")
-                print(f"  - Skipped (no data): {len(skipped_programs)}")
-                print(f"  - Failed (errors): {len(failed_programs)}")
-                
-                if saved_files:
-                    print(f"\n✅ Successfully saved programs:")
-                    for i, file_path in enumerate(saved_files, 1):
-                        print(f"  {i}. {file_path}")
-                
-                if skipped_programs:
-                    print(f"\n⚠️  Skipped programs ({len(skipped_programs)}):")
-                    for program_name, reason in skipped_programs:
-                        print(f"  - {program_name}: {reason}")
-                
-                if failed_programs:
-                    print(f"\n❌ Failed programs ({len(failed_programs)}):")
-                    for program_name, error in failed_programs:
-                        print(f"  - {program_name}: {error}")
-                
-            finally:
-                # Clean up uploaded files
-                print(f"\n🧹 Cleaning up uploaded files...")
-                for gemini_file in page_to_gemini_file.values():
-                    delete_gemini_file(gemini_file.name, client)
-                print("✅ Cleanup complete")
-            
-            return
-        
-        # Default: Run both phases with optimization
-        # PROGRAM LOCATION EXTRACTION: Identify all BASIC programs
-        print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
-        program_list_response = identify_basic_programs(gemini_files, client, verbose=args.verbose)
-        programs = parse_program_list(program_list_response, verbose=args.verbose)
-        
-        if not programs:
-            print("❌ No programs found in the images.")
-            return
-        
-        print(f"✅ Found {len(programs)} programs:")
-        for i, program in enumerate(programs, 1):
-            pages_str = ", ".join(map(str, program.get('pages', [])))
-            print(f"  {i}. {program['name']} (pages: {pages_str})")
-        
-        # Save program list to JSON for debugging
-        save_program_list_to_json(programs, args.output_dir)
-        
-        # OPTIMIZATION: Create page-to-file mapping for Program Source Extraction reuse
-        print(f"\n🔧 Creating page-to-file mapping for optimized Program Source Extraction...")
-        page_to_gemini_file = create_page_to_file_mapping(gemini_files, start_page, verbose=args.verbose)
-        
-        # Get unique pages needed for all programs
-        unique_pages = get_unique_pages_from_programs(programs)
-        available_pages = [page for page in unique_pages if page in page_to_gemini_file]
-        missing_pages = [page for page in unique_pages if page not in page_to_gemini_file]
-        
-        print(f"📊 Program optimization analysis:")
-        print(f"  - Programs need {len(unique_pages)} unique pages: {', '.join(map(str, unique_pages))}")
-        print(f"  - Available from upload: {len(available_pages)} pages")
-        print(f"  - Missing from upload: {len(missing_pages)} pages")
-        
-        if missing_pages:
-            print(f"⚠️  Missing pages will cause some programs to be skipped: {missing_pages}")
-        
-        # PROGRAM SOURCE EXTRACTION: Extract source code for each program using optimized approach
-        print(f"\n📝 Program Source Extraction: Extracting source code for each program (optimized)...")
+                png_path = convert_to_png(gif_path, verbose=verbose)
+                png_files.append(png_path)
+            except Exception as e:
+                print(f"❌ Failed to convert {gif_path}: {e}")
+    print(f"✅ Converted {len(png_files)} images")
+
+def handle_locate_programs_only(gemini_files: list[Any], output_dir: str, verbose: bool) -> None:
+    """Handle the locate-programs-only mode: identify BASIC programs and save results to JSON."""
+    print(f"\n🔍 Program Location Extraction: Identifying BASIC programs...")
+    program_list_response = identify_basic_programs(gemini_files, client, verbose=verbose)
+    programs = parse_program_list(program_list_response, verbose=verbose)
+    if not programs:
+        print("❌ No programs found in the images.")
+        return
+    print(f"✅ Found {len(programs)} programs:")
+    for i, program in enumerate(programs, 1):
+        pages_str = ", ".join(map(str, program.get('pages', [])))
+        print(f"  {i}. {program['name']} (pages: {pages_str})")
+    save_program_list_to_json(programs, output_dir)
+
+def handle_extract_source_only(program_list_path: str, output_dir: str, verbose: bool) -> None:
+    """Handle the extract-source-only mode: extract program source using existing program list JSON."""
+    print(f"\n📝 Program Source Extraction: Loading program list from {program_list_path}")
+    programs = load_program_list_from_json(program_list_path, verbose=verbose)
+    if not programs:
+        print("❌ No programs found in the program list file.")
+        return
+    print(f"✅ Loaded {len(programs)} programs from file")
+    unique_pages = get_unique_pages_from_programs(programs)
+    print(f"📊 Programs need {len(unique_pages)} unique pages: {', '.join(map(str, unique_pages))}")
+    page_to_gemini_file = upload_images_for_pages(unique_pages, client, verbose=verbose)
+    if not page_to_gemini_file:
+        print("❌ No images could be uploaded.")
+        return
+    try:
         saved_files = []
         skipped_programs = []
         failed_programs = []
-        
         for i, program in enumerate(programs, 1):
             program_name = program['name']
             page_numbers = program.get('pages', [])
             pages_str = ', '.join(map(str, page_numbers))
-            
             print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}' (pages: {pages_str})...")
-            
-            if args.verbose:
+            if verbose:
                 print(f"🔍 VERBOSE: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
-            
             try:
-                # Get the specific Gemini files for this program
                 files_for_program = []
-                missing_pages_for_program = []
-                
+                missing_pages = []
                 for page in page_numbers:
                     if page in page_to_gemini_file:
                         files_for_program.append(page_to_gemini_file[page])
                     else:
-                        missing_pages_for_program.append(page)
-                
-                if args.verbose:
+                        missing_pages.append(page)
+                if verbose:
                     print(f"🔍 VERBOSE: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
-                    if missing_pages_for_program:
-                        print(f"🔍 VERBOSE: Missing pages for '{program_name}': {missing_pages_for_program}")
-                
+                    if missing_pages:
+                        print(f"🔍 VERBOSE: Missing pages for '{program_name}': {missing_pages}")
                 if not files_for_program:
                     skip_msg = f"No files found for '{program_name}' on pages {page_numbers}"
                     print(f"⚠️  {skip_msg}")
                     skipped_programs.append((program_name, skip_msg))
                     continue
-                
-                if missing_pages_for_program:
-                    print(f"⚠️  Partial data: missing {len(missing_pages_for_program)} pages for '{program_name}': {missing_pages_for_program}")
-                
+                if missing_pages:
+                    print(f"⚠️  Partial data: missing {len(missing_pages)} pages for '{program_name}': {missing_pages}")
                 print(f"🤖 Calling Gemini AI to extract source code...")
-                source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=args.verbose)
-                
+                source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=verbose)
                 if not source_code.strip():
                     skip_msg = f"Empty response from Gemini for '{program_name}'"
                     print(f"⚠️  {skip_msg}")
                     skipped_programs.append((program_name, skip_msg))
                     continue
-                
-                output_path = save_program_to_file(program_name, source_code, args.output_dir)
+                output_path = save_program_to_file(program_name, source_code, output_dir)
                 saved_files.append(output_path)
                 print(f"✅ Successfully saved '{program_name}' -> {output_path}")
-                
             except Exception as e:
                 error_msg = f"Error processing '{program_name}': {e}"
                 print(f"❌ {error_msg}")
                 failed_programs.append((program_name, str(e)))
-                if args.verbose:
+                if verbose:
                     import traceback
                     print(f"🔍 VERBOSE: Full traceback for '{program_name}':")
                     traceback.print_exc()
-        
-        # Final summary for both phases
+        print(f"\n🎉 Program Source Extraction complete!")
+        print(f"📊 Summary:")
+        print(f"  - Total programs in list: {len(programs)}")
+        print(f"  - Successfully saved: {len(saved_files)}")
+        print(f"  - Skipped (no data): {len(skipped_programs)}")
+        print(f"  - Failed (errors): {len(failed_programs)}")
+        if saved_files:
+            print(f"\n✅ Successfully saved programs:")
+            for i, file_path in enumerate(saved_files, 1):
+                print(f"  {i}. {file_path}")
+        if skipped_programs:
+            print(f"\n⚠️  Skipped programs ({len(skipped_programs)}):")
+            for program_name, reason in skipped_programs:
+                print(f"  - {program_name}: {reason}")
+        if failed_programs:
+            print(f"\n❌ Failed programs ({len(failed_programs)}):")
+            for program_name, error in failed_programs:
+                print(f"  - {program_name}: {error}")
+    finally:
+        print(f"\n🧹 Cleaning up uploaded files...")
+        for gemini_file in page_to_gemini_file.values():
+            delete_gemini_file(gemini_file.name, client)
+        print("✅ Cleanup complete")
+
+def handle_default_workflow(start_page: int, end_page: int, download_pause: float, output_dir: str, verbose: bool) -> None:
+    """Handle the default workflow: download, convert, upload, locate programs, and extract sources."""
+    print(f"\n📥 Downloading and converting {end_page - start_page + 1} images...")
+    urls = generate_atari_image_urls(start=start_page, end=end_page)
+    png_files = download_images(urls, pause_seconds=download_pause, verbose=verbose)
+    if not png_files:
+        print("❌ No images downloaded.")
+        return
+    print(f"✅ Successfully processed {len(png_files)} images")
+    print(f"\n📤 Uploading {len(png_files)} images to Gemini...")
+    gemini_files = upload_multiple_images_to_gemini(png_files, client)
+    print(f"✅ All images uploaded successfully")
+    try:
+        handle_locate_programs_only(gemini_files, output_dir, verbose)
+        # After locating programs, extract sources
+        # Reload program list from output_dir
+        programs = load_program_list_from_json(Path(output_dir) / "program_list.json", verbose=verbose)
+        if not programs:
+            print("❌ No programs found in the program list file.")
+            return
+        unique_pages = get_unique_pages_from_programs(programs)
+        page_to_gemini_file = create_page_to_file_mapping(gemini_files, start_page, verbose=verbose)
+        saved_files = []
+        skipped_programs = []
+        failed_programs = []
+        for i, program in enumerate(programs, 1):
+            program_name = program['name']
+            page_numbers = program.get('pages', [])
+            pages_str = ', '.join(map(str, page_numbers))
+            print(f"\n📋 ({i}/{len(programs)}) Processing '{program_name}' (pages: {pages_str})...")
+            if verbose:
+                print(f"🔍 VERBOSE: Program '{program_name}' expects {len(page_numbers)} pages: {page_numbers}")
+            try:
+                files_for_program = []
+                missing_pages_for_program = []
+                for page in page_numbers:
+                    if page in page_to_gemini_file:
+                        files_for_program.append(page_to_gemini_file[page])
+                    else:
+                        missing_pages_for_program.append(page)
+                if verbose:
+                    print(f"🔍 VERBOSE: Found files for {len(files_for_program)}/{len(page_numbers)} pages")
+                    if missing_pages_for_program:
+                        print(f"🔍 VERBOSE: Missing pages for '{program_name}': {missing_pages_for_program}")
+                if not files_for_program:
+                    skip_msg = f"No files found for '{program_name}' on pages {page_numbers}"
+                    print(f"⚠️  {skip_msg}")
+                    skipped_programs.append((program_name, skip_msg))
+                    continue
+                if missing_pages_for_program:
+                    print(f"⚠️  Partial data: missing {len(missing_pages_for_program)} pages for '{program_name}': {missing_pages_for_program}")
+                print(f"🤖 Calling Gemini AI to extract source code...")
+                source_code = extract_program_source_optimized(files_for_program, program_name, page_numbers, client, verbose=verbose)
+                if not source_code.strip():
+                    skip_msg = f"Empty response from Gemini for '{program_name}'"
+                    print(f"⚠️  {skip_msg}")
+                    skipped_programs.append((program_name, skip_msg))
+                    continue
+                output_path = save_program_to_file(program_name, source_code, output_dir)
+                saved_files.append(output_path)
+                print(f"✅ Successfully saved '{program_name}' -> {output_path}")
+            except Exception as e:
+                error_msg = f"Error processing '{program_name}': {e}"
+                print(f"❌ {error_msg}")
+                failed_programs.append((program_name, str(e)))
+                if verbose:
+                    import traceback
+                    print(f"🔍 VERBOSE: Full traceback for '{program_name}':")
+                    traceback.print_exc()
         print(f"\n🎉 Processing complete!")
         print(f"📊 Summary:")
         print(f"  - Images processed: {len(png_files)}")
@@ -867,30 +845,45 @@ def main():
         print(f"  - Successfully saved: {len(saved_files)}")
         print(f"  - Skipped (no data): {len(skipped_programs)}")
         print(f"  - Failed (errors): {len(failed_programs)}")
-        print(f"  - Output directory: {args.output_dir}")
-        
+        print(f"  - Output directory: {output_dir}")
         if saved_files:
             print(f"\n✅ Successfully saved programs:")
             for i, file_path in enumerate(saved_files, 1):
                 print(f"  {i}. {file_path}")
-        
         if skipped_programs:
             print(f"\n⚠️  Skipped programs ({len(skipped_programs)}):")
             for program_name, reason in skipped_programs:
                 print(f"  - {program_name}: {reason}")
-        
         if failed_programs:
             print(f"\n❌ Failed programs ({len(failed_programs)}):")
             for program_name, error in failed_programs:
                 print(f"  - {program_name}: {error}")
-    
     finally:
-        # Clean up uploaded files (only if gemini_files exists)
-        if 'gemini_files' in locals():
-            print(f"\n🧹 Cleaning up uploaded files...")
-            for gemini_file in gemini_files:
-                delete_gemini_file(gemini_file.name, client)
-            print("✅ Cleanup complete")
+        print(f"\n🧹 Cleaning up uploaded files...")
+        for gemini_file in gemini_files:
+            delete_gemini_file(gemini_file.name, client)
+        print("✅ Cleanup complete")
+
+def main() -> None:
+    """Main entry point for the script. Handles argument parsing and workflow orchestration."""
+    args = parse_arguments()
+    start_page = args.start
+    end_page = args.end
+    global client
+    client = genai.Client()
+    if args.download_images_only:
+        handle_download_images_only(start_page, end_page, args.download_pause, args.verbose)
+        return
+    if args.convert_images_only:
+        handle_convert_images_only(start_page, end_page, args.verbose)
+        return
+    if args.extract_source_only:
+        if not args.program_list:
+            print("❌ --program-list is required for --extract-source-only mode")
+            return
+        handle_extract_source_only(args.program_list, args.output_dir, args.verbose)
+        return
+    handle_default_workflow(start_page, end_page, args.download_pause, args.output_dir, args.verbose)
 
 if __name__ == "__main__":
     main()
