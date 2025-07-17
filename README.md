@@ -105,5 +105,24 @@ python process.py
 
 ```
 
+## Code Formatting with Black
+
+To ensure consistent Python code style, this project uses [Black](https://black.readthedocs.io/en/stable/):
+
+1. Install dependencies (if not already):
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. To format the main script:
+   ```bash
+   black process.py
+   ```
+3. To format all Python files in the project:
+   ```bash
+   black .
+   ```
+
+Black will automatically reformat your code to its standard style. No configuration is needed unless you want to customize Black's behavior.
+
 ```
 
